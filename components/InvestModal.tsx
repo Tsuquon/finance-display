@@ -245,7 +245,7 @@ export default function InvestModal({ allocations, onClose, onInvested }: Props)
               <p className="text-sm text-red-300">{errorMsg}</p>
               <p className="text-xs text-gray-600 max-w-xs">
                 Make sure the IBKR Client Portal Gateway is running at{" "}
-                <span className="font-mono text-gray-500">localhost:5000</span> and you&apos;re authenticated.
+                <span className="font-mono text-gray-500">localhost:5001</span> and you&apos;re authenticated.
               </p>
             </div>
           )}

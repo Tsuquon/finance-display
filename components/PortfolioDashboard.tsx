@@ -411,7 +411,7 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
             </div>
           ) : ibkrNeedsLogin ? (
             <a
-              href="https://localhost:5000"
+              href="https://localhost:5001"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 rounded-md border border-yellow-700/40 bg-yellow-900/20 px-2 py-1 text-xs text-yellow-400 hover:border-yellow-600 transition-colors shrink-0"

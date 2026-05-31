@@ -1,7 +1,7 @@
 import https from "node:https";
 import http from "node:http";
 
-const GATEWAY = (process.env.IBKR_GATEWAY_URL ?? "https://localhost:5000").replace(/\/$/, "");
+const GATEWAY = (process.env.IBKR_GATEWAY_URL ?? "https://localhost:5001").replace(/\/$/, "");
 export const PAPER_MODE = process.env.IBKR_PAPER === "true";
 
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json };
