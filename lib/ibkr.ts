@@ -84,6 +84,10 @@ export async function tickle(): Promise<void> {
   await req("/v1/api/tickle", { method: "POST" });
 }
 
+export async function reauthenticate(): Promise<void> {
+  await req("/v1/api/iserver/reauthenticate", { method: "POST" });
+}
+
 export async function getAccounts(): Promise<string[]> {
   const res = await req("/v1/api/iserver/accounts");
   const d = res.data as { accounts?: string[] } | string[];

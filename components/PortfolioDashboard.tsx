@@ -161,18 +161,26 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
 
   useEffect(() => {
     let alive = true;
+    let id: ReturnType<typeof setTimeout>;
+
     async function poll() {
       try {
         const res = await fetch("/api/ibkr/status");
         const data = await res.json();
-        if (alive) { setIbkrConnected(!!data.connected); setIbkrNeedsLogin(!!data.needsLogin); }
+        if (!alive) return;
+        setIbkrConnected(!!data.connected);
+        setIbkrNeedsLogin(!!data.needsLogin);
+        const delay = data.connected ? 30_000 : data.gatewayReachable ? 4_000 : 15_000;
+        id = setTimeout(poll, delay);
       } catch {
-        if (alive) setIbkrConnected(false);
+        if (!alive) return;
+        setIbkrConnected(false);
+        id = setTimeout(poll, 15_000);
       }
     }
+
     poll();
-    const id = setInterval(poll, 30_000);
-    return () => { alive = false; clearInterval(id); };
+    return () => { alive = false; clearTimeout(id); };
   }, []);
 
   function handleSave() {

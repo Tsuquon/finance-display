@@ -56,26 +56,32 @@ export default function PortfolioHome() {
     setPortfolios(loadPortfolios());
   }, []);
 
-  // Check IBKR connection
+  // Check IBKR connection — polls fast when waiting for login, slow once connected
   useEffect(() => {
     let alive = true;
+    let id: ReturnType<typeof setTimeout>;
+
     async function poll() {
       try {
         const res = await fetch("/api/ibkr/status");
         const data = await res.json();
-        if (alive) {
-          setIbkrConnected(!!data.connected);
-          setIbkrPaper(!!data.paper);
-          setIbkrNeedsLogin(!!data.needsLogin);
-          setIbkrGateway(!!data.gatewayReachable);
-        }
+        if (!alive) return;
+        setIbkrConnected(!!data.connected);
+        setIbkrPaper(!!data.paper);
+        setIbkrNeedsLogin(!!data.needsLogin);
+        setIbkrGateway(!!data.gatewayReachable);
+        // Poll every 4s while waiting for login, 30s once connected
+        const delay = data.connected ? 30_000 : data.gatewayReachable ? 4_000 : 15_000;
+        id = setTimeout(poll, delay);
       } catch {
-        if (alive) setIbkrConnected(false);
+        if (!alive) return;
+        setIbkrConnected(false);
+        id = setTimeout(poll, 15_000);
       }
     }
+
     poll();
-    const id = setInterval(poll, 30_000);
-    return () => { alive = false; clearInterval(id); };
+    return () => { alive = false; clearTimeout(id); };
   }, []);
 
   // Fetch P&L for all invested portfolios
