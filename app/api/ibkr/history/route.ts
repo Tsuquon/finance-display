@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import YFDefault from "yahoo-finance2";
 import type { InvestedPosition } from "@/lib/portfolios";
+import { MOCK_MODE } from "@/lib/ibkr";
 
 type Quote = { date: Date | string; close: number | null };
 type ChartResult = { quotes: Quote[] };
@@ -17,6 +18,41 @@ interface DataPoint {
   pnlPct: number;
 }
 
+function mockHistory(investedAt: number, totalCostBasis: number) {
+  const start = new Date(investedAt);
+  const today = new Date();
+  const points = [];
+
+  // Seeded random walk so the curve is stable across refreshes
+  let seed = investedAt % 9999;
+  function rand() {
+    seed = (seed * 1664525 + 1013904223) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  }
+
+  let value = totalCostBasis;
+  const cursor = new Date(start);
+
+  while (cursor <= today) {
+    const dow = cursor.getDay();
+    if (dow !== 0 && dow !== 6) { // skip weekends
+      // Daily return: slight positive drift (~0.05%) + noise (~0.8%)
+      const dailyReturn = (rand() - 0.47) * 0.016;
+      value = value * (1 + dailyReturn);
+      const pnl    = value - totalCostBasis;
+      const pnlPct = (pnl / totalCostBasis) * 100;
+      points.push({
+        date:   cursor.toISOString().slice(0, 10),
+        value:  parseFloat(value.toFixed(2)),
+        pnl:    parseFloat(pnl.toFixed(2)),
+        pnlPct: parseFloat(pnlPct.toFixed(2)),
+      });
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return points;
+}
+
 export async function POST(req: Request) {
   try {
     const { positions, investedAt }: { positions: InvestedPosition[]; investedAt: number } =
@@ -26,9 +62,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ points: [] });
     }
 
+    const totalCostBasis = positions.reduce((s, p) => s + p.dollarInvested, 0);
+
+    if (MOCK_MODE && process.env.NODE_ENV !== "production") {
+      return NextResponse.json({ points: mockHistory(investedAt, totalCostBasis), totalCostBasis });
+    }
+
     const startDate = new Date(investedAt);
     const endDate   = new Date();
-    const totalCostBasis = positions.reduce((s, p) => s + p.dollarInvested, 0);
 
     const histories = await Promise.all(
       positions.map(async (pos) => {
