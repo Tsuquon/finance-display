@@ -475,8 +475,8 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
           )
         )}
 
-        {/* Invest button (sheet mode, IBKR connected) */}
-        {sheetMode && ibkrConnected && !loading && displayRows.length > 0 && (
+        {/* Invest button — only for saved (locked) portfolios with IBKR connected */}
+        {sheetMode && locked && ibkrConnected && !loading && displayRows.length > 0 && (
           <button
             onClick={() => setInvestOpen(true)}
             className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 transition-colors shrink-0"
