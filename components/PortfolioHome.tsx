@@ -50,6 +50,7 @@ export default function PortfolioHome() {
   const [chartPortfolio, setChartPortfolio] = useState<SavedPortfolio | null>(null);
   const [ibkrConnected, setIbkrConnected]   = useState<boolean | null>(null);
   const [ibkrPaper, setIbkrPaper]           = useState(false);
+  const [ibkrMock, setIbkrMock]             = useState(false);
   const [ibkrNeedsLogin, setIbkrNeedsLogin] = useState(false);
   const [ibkrGateway, setIbkrGateway]       = useState(false);
   const [pnlMap, setPnlMap]           = useState<Record<string, PnLResult>>({});
@@ -70,6 +71,7 @@ export default function PortfolioHome() {
         if (!alive) return;
         setIbkrConnected(!!data.connected);
         setIbkrPaper(!!data.paper);
+        setIbkrMock(!!data.mock);
         setIbkrNeedsLogin(!!data.needsLogin);
         setIbkrGateway(!!data.gatewayReachable);
         // Poll every 4s while waiting for login, 30s once connected
@@ -174,7 +176,7 @@ export default function PortfolioHome() {
         ) : ibkrConnected ? (
           <div className="flex items-center gap-1.5 text-xs text-gray-400">
             <div className="h-2 w-2 rounded-full bg-emerald-400" />
-            {ibkrPaper ? "IBKR Paper" : "IBKR Live"}
+            {ibkrMock ? "IBKR Mock" : ibkrPaper ? "IBKR Paper" : "IBKR Live"}
           </div>
         ) : ibkrNeedsLogin ? (
           <a

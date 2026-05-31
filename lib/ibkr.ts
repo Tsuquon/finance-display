@@ -3,6 +3,7 @@ import http from "node:http";
 
 const GATEWAY = (process.env.IBKR_GATEWAY_URL ?? "https://localhost:5001").replace(/\/$/, "");
 export const PAPER_MODE = process.env.IBKR_PAPER === "true";
+export const MOCK_MODE  = process.env.IBKR_MOCK  === "true";
 
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json };
 
@@ -25,7 +26,7 @@ async function req(
         "User-Agent": "PortfolioLens/1.0",
         ...(body ? { "Content-Length": Buffer.byteLength(body) } : {}),
       },
-      rejectUnauthorized: false, // self-signed cert on local gateway
+      rejectUnauthorized: false,
     };
 
     const transport = isHttps ? https : (http as unknown as typeof https);

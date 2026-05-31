@@ -131,7 +131,7 @@ export default function InvestModal({ allocations, onClose, onInvested }: Props)
           {step === "confirming" && paper && (
             <div className="mx-6 mt-4 rounded-lg bg-yellow-900/30 border border-yellow-700/40 px-4 py-2.5 flex items-center gap-2">
               <span className="text-yellow-400 text-sm">⚠</span>
-              <p className="text-xs text-yellow-300 font-semibold">Paper Trading Mode — no real money will be used</p>
+              <p className="text-xs text-yellow-300 font-semibold">Mock Mode — orders simulated, no real trades placed</p>
             </div>
           )}
 
