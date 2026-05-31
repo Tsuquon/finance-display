@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import PortfolioLoadingScreen from "./PortfolioLoadingScreen";
 import {
@@ -19,6 +19,19 @@ import type { TechnicalResult } from "@/lib/technicalAnalysis";
 import { cats } from "@/data/categories";
 
 type Mode = "aggressive" | "balanced" | "conservative";
+
+const PORTFOLIOS_KEY = "finance-saved-portfolios";
+
+interface SavedPortfolio {
+  id: string;
+  name: string;
+  savedAt: number;
+  mode: Mode;
+  portfolioSize: string;
+  maxPositions: number;
+  minAlloc: number;
+  excluded: string[];
+}
 
 const CATEGORY_FACTORS: Record<string, Record<Mode, number>> = {
   future:  { aggressive: 1.50, balanced: 1.20, conservative: 0.50 },
@@ -90,6 +103,11 @@ export default function PortfolioDashboard() {
   const [maxPositions, setMaxPositions] = useState(0); // 0 = no limit
   const [excluded, setExcluded]       = useState<Set<string>>(new Set());
 
+  const [savedPortfolios, setSavedPortfolios] = useState<SavedPortfolio[]>([]);
+  const [showDrawer, setShowDrawer]           = useState(false);
+  const [saveName, setSaveName]               = useState("");
+  const saveInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     const saved: Company[] = JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? "[]");
 
@@ -139,6 +157,44 @@ export default function PortfolioDashboard() {
       })
       .catch(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    const stored = localStorage.getItem(PORTFOLIOS_KEY);
+    if (stored) setSavedPortfolios(JSON.parse(stored));
+  }, []);
+
+  function savePortfolio() {
+    const name = saveName.trim() || `Portfolio ${savedPortfolios.length + 1}`;
+    const portfolio: SavedPortfolio = {
+      id: Date.now().toString(),
+      name,
+      savedAt: Date.now(),
+      mode,
+      portfolioSize,
+      maxPositions,
+      minAlloc,
+      excluded: [...excluded],
+    };
+    const updated = [...savedPortfolios, portfolio];
+    setSavedPortfolios(updated);
+    localStorage.setItem(PORTFOLIOS_KEY, JSON.stringify(updated));
+    setSaveName("");
+  }
+
+  function loadPortfolio(p: SavedPortfolio) {
+    setMode(p.mode);
+    setPortfolioSize(p.portfolioSize);
+    setMaxPositions(p.maxPositions);
+    setMinAlloc(p.minAlloc);
+    setExcluded(new Set(p.excluded));
+    setShowDrawer(false);
+  }
+
+  function deletePortfolio(id: string) {
+    const updated = savedPortfolios.filter((p) => p.id !== id);
+    setSavedPortfolios(updated);
+    localStorage.setItem(PORTFOLIOS_KEY, JSON.stringify(updated));
+  }
 
   const portfolioNum = useMemo(() => {
     const n = parseFloat(portfolioSize.replace(/[^0-9.]/g, ""));
@@ -313,7 +369,126 @@ export default function PortfolioDashboard() {
             ))}
           </select>
         </div>
+
+        {/* Portfolios drawer button */}
+        <button
+          onClick={() => {
+            setShowDrawer(true);
+            setTimeout(() => saveInputRef.current?.focus(), 50);
+          }}
+          className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs font-semibold text-gray-300 hover:border-gray-500 hover:text-white transition-colors shrink-0"
+        >
+          <span>◈</span>
+          <span>Portfolios</span>
+          {savedPortfolios.length > 0 && (
+            <span className="ml-0.5 rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] text-white leading-none">
+              {savedPortfolios.length}
+            </span>
+          )}
+        </button>
       </header>
+
+      {/* ── Portfolios Drawer ── */}
+      {showDrawer && (
+        <div className="fixed inset-0 z-30 flex justify-end">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setShowDrawer(false)}
+          />
+          <div className="relative z-10 flex h-full w-80 flex-col border-l border-gray-800 bg-gray-950 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
+              <h2 className="text-sm font-bold text-white">Saved Portfolios</h2>
+              <button
+                onClick={() => setShowDrawer(false)}
+                className="text-gray-500 hover:text-white transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Save current */}
+            <div className="border-b border-gray-800 px-5 py-4 space-y-2">
+              <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Save Current</p>
+              <div className="flex gap-2">
+                <input
+                  ref={saveInputRef}
+                  type="text"
+                  placeholder={`Portfolio ${savedPortfolios.length + 1}`}
+                  value={saveName}
+                  onChange={(e) => setSaveName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && savePortfolio()}
+                  className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none"
+                />
+                <button
+                  onClick={savePortfolio}
+                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 transition-colors"
+                >
+                  Save
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-600">
+                Saves: {mode} · ${portfolioSize} · {maxPositions > 0 ? `${maxPositions} positions` : "all positions"} · min {minAlloc}%{excluded.size > 0 ? ` · ${excluded.size} excluded` : ""}
+              </p>
+            </div>
+
+            {/* Portfolio list */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+              {savedPortfolios.length === 0 ? (
+                <p className="text-xs text-gray-600 text-center pt-6">No saved portfolios yet.</p>
+              ) : (
+                [...savedPortfolios].reverse().map((p) => (
+                  <div
+                    key={p.id}
+                    className="rounded-xl border border-gray-800 bg-gray-900/60 p-4 space-y-2"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-semibold text-white truncate">{p.name}</p>
+                      <button
+                        onClick={() => deletePortfolio(p.id)}
+                        title="Delete"
+                        className="shrink-0 text-gray-700 hover:text-red-400 transition-colors text-xs leading-none mt-0.5"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 text-[10px]">
+                      <span className={`rounded-md px-1.5 py-0.5 font-semibold ${
+                        p.mode === "aggressive" ? "bg-red-900/40 text-red-400" :
+                        p.mode === "balanced"   ? "bg-indigo-900/40 text-indigo-400" :
+                                                   "bg-amber-900/40 text-amber-400"
+                      }`}>
+                        {p.mode}
+                      </span>
+                      <span className="rounded-md bg-gray-800 px-1.5 py-0.5 text-gray-400 font-mono">
+                        ${parseInt(p.portfolioSize).toLocaleString()}
+                      </span>
+                      <span className="rounded-md bg-gray-800 px-1.5 py-0.5 text-gray-400">
+                        {p.maxPositions > 0 ? `${p.maxPositions} pos` : "all pos"}
+                      </span>
+                      {p.excluded.length > 0 && (
+                        <span className="rounded-md bg-gray-800 px-1.5 py-0.5 text-gray-500">
+                          −{p.excluded.length} excl
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-gray-600">
+                        {new Date(p.savedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      </span>
+                      <button
+                        onClick={() => loadPortfolio(p)}
+                        className="rounded-lg bg-gray-800 px-3 py-1 text-xs font-semibold text-gray-300 hover:bg-indigo-600 hover:text-white transition-colors"
+                      >
+                        Load
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="px-6 py-5 space-y-5 max-w-7xl mx-auto">
         {/* ── Summary strip ── */}
