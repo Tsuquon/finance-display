@@ -17,7 +17,7 @@ import type { Company } from "@/types";
 import type { BatchScoreMap } from "@/app/api/scores/batch/route";
 import type { TechnicalResult } from "@/lib/technicalAnalysis";
 import { cats } from "@/data/categories";
-import type { SavedPortfolio, Mode, InvestmentRecord } from "@/lib/portfolios";
+import type { SavedPortfolio, Mode, InvestmentRecord, SnapshotRow } from "@/lib/portfolios";
 import InvestModal from "./InvestModal";
 
 const CATEGORY_FACTORS: Record<string, Record<Mode, number>> = {
@@ -89,7 +89,7 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
   const [companies, setCompanies]       = useState<Company[]>([]);
   const [scores, setScores]             = useState<BatchScoreMap>({});
   const [technicals, setTechnicals]     = useState<Record<string, TechnicalResult>>({});
-  const [loading, setLoading]           = useState(true);
+  const [loading, setLoading]           = useState(!initial?.snapshot);
   const [companiesReady, setCompaniesReady] = useState(false);
   const [scoresReady, setScoresReady]   = useState(false);
   const [techProgress, setTechProgress] = useState(0);
@@ -112,6 +112,9 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
   const [investOpen, setInvestOpen]       = useState(false);
 
   useEffect(() => {
+    // Locked portfolios use their frozen snapshot — no fetching needed
+    if (locked && initial?.snapshot) return;
+
     const saved: Company[] = JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? "[]");
 
     fetch("/api/companies")
@@ -185,7 +188,21 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
     return () => { alive = false; clearTimeout(id); };
   }, []);
 
-  function handleSave() {
+  function buildSnapshot(): SnapshotRow[] {
+    return displayRows.map((r) => ({
+      ticker:    rowTicker(r),
+      name:      rowName(r),
+      category:  rowCategory(r),
+      allocation: r.allocation,
+      dollar:    r.dollar,
+      aiSt:      r.aiSt,
+      aiLt:      r.aiLt,
+      techScore: r.techScore,
+      signal:    r.signal,
+    }));
+  }
+
+  function handleSave(rows: SnapshotRow[]) {
     if (!onSaved) return;
     const name = saveName.trim() || `Portfolio ${Date.now()}`;
     onSaved({
@@ -197,6 +214,7 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
       maxPositions,
       minAlloc,
       excluded: [...excluded],
+      snapshot: rows,
     });
   }
 
@@ -264,24 +282,41 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
       .sort((a, b) => b.allocation - a.allocation);
   }, [companies, scores, technicals, mode, portfolioNum, maxPositions, excluded]);
 
+  // Locked portfolios display their frozen snapshot directly
+  const frozenRows = locked && initial?.snapshot ? initial.snapshot : null;
+
   const displayRows = useMemo(
-    () => allocations.filter((r) => r.allocation >= minAlloc),
-    [allocations, minAlloc]
+    () => frozenRows ?? allocations.filter((r) => r.allocation >= minAlloc),
+    [frozenRows, allocations, minAlloc]
   );
+
+  function rowTicker(r: SnapshotRow | AllocRow) {
+    return frozenRows ? (r as SnapshotRow).ticker : (r as AllocRow).company.ticker;
+  }
+  function rowName(r: SnapshotRow | AllocRow) {
+    return frozenRows ? (r as SnapshotRow).name : (r as AllocRow).company.name;
+  }
+  function rowCategory(r: SnapshotRow | AllocRow) {
+    return frozenRows ? (r as SnapshotRow).category : (r as AllocRow).company.category;
+  }
 
   const chartData = useMemo(
     () =>
-      displayRows.map((r) => ({
-        ticker: r.company.ticker,
-        name: r.company.name,
-        allocation: parseFloat(r.allocation.toFixed(1)),
-        category: r.company.category,
-        color: cats[r.company.category]?.color ?? "#6b7280",
-      })),
+      displayRows.map((r) => {
+        const cat = rowCategory(r);
+        return {
+          ticker: rowTicker(r),
+          name:   rowName(r),
+          allocation: parseFloat(r.allocation.toFixed(1)),
+          category: cat,
+          color: cats[cat]?.color ?? "#6b7280",
+        };
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [displayRows]
   );
 
-  const hiddenCount = allocations.length - displayRows.length;
+  const hiddenCount = frozenRows ? 0 : allocations.length - displayRows.length;
   const portfolioStr = portfolioNum.toLocaleString("en-US", {
     style: "currency",
     currency: "USD",
@@ -311,7 +346,7 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
               placeholder="Portfolio name"
               value={saveName}
               onChange={(e) => setSaveName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") setSaveOpen(false); }}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSave(buildSnapshot()); if (e.key === "Escape") setSaveOpen(false); }}
               autoFocus
               className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none"
             />
@@ -323,7 +358,7 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
                 Cancel
               </button>
               <button
-                onClick={handleSave}
+                onClick={() => handleSave(buildSnapshot())}
                 className="flex-1 rounded-lg bg-indigo-600 py-2 text-xs font-semibold text-white hover:bg-indigo-500 transition-colors"
               >
                 Save
@@ -475,7 +510,7 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
             {
               label: "Largest Position",
               value: displayRows[0]
-                ? `${displayRows[0].allocation.toFixed(1)}%  ${displayRows[0].company.ticker}`
+                ? `${displayRows[0].allocation.toFixed(1)}%  ${rowTicker(displayRows[0])}`
                 : "—",
             },
             {
@@ -577,18 +612,20 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
               </thead>
               <tbody>
                 {displayRows.map((row, i) => {
-                  const cat = cats[row.company.category];
+                  const ticker = rowTicker(row);
+                  const name   = rowName(row);
+                  const cat    = cats[rowCategory(row)];
                   return (
                     <tr
-                      key={row.company.ticker}
+                      key={ticker}
                       className={`border-b border-gray-800/50 transition-colors hover:bg-gray-800/30 ${
                         i === 0 ? "bg-gray-800/20" : ""
                       }`}
                     >
                       <td className="px-5 py-3">
-                        <span className="font-semibold text-white">{row.company.name}</span>
+                        <span className="font-semibold text-white">{name}</span>
                         <span className={`ml-2 text-xs font-mono ${cat.accent}`}>
-                          {row.company.ticker}
+                          {ticker}
                         </span>
                       </td>
                       <td className="px-4 py-3">
@@ -635,9 +672,9 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
                         <td className="px-4 py-3 text-center">
                           <button
                             onClick={() =>
-                              setExcluded((prev) => new Set([...prev, row.company.ticker]))
+                              setExcluded((prev) => new Set([...prev, ticker]))
                             }
-                            title={`Exclude ${row.company.ticker}`}
+                            title={`Exclude ${ticker}`}
                             className="text-xs text-gray-700 hover:text-red-400 transition-colors leading-none"
                           >
                             ✕
@@ -747,8 +784,8 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
       {investOpen && (
         <InvestModal
           allocations={displayRows.map((r) => ({
-            ticker: r.company.ticker,
-            name: r.company.name,
+            ticker: rowTicker(r),
+            name:   rowName(r),
             dollar: r.dollar,
           }))}
           onClose={() => setInvestOpen(false)}

@@ -10,6 +10,18 @@ export interface InvestedPosition {
   dollarInvested: number;
 }
 
+export interface SnapshotRow {
+  ticker: string;
+  name: string;
+  category: string;
+  allocation: number;
+  dollar: number;
+  aiSt: number;
+  aiLt: number;
+  techScore: number;
+  signal: string;
+}
+
 export interface InvestmentRecord {
   ibkrAccountId: string;
   investedAt: number;      // epoch ms
@@ -27,6 +39,7 @@ export interface SavedPortfolio {
   maxPositions: number;
   minAlloc: number;
   excluded: string[];
+  snapshot?: SnapshotRow[];      // frozen allocations at save time
   investment?: InvestmentRecord;
 }
 
