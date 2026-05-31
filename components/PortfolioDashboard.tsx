@@ -17,7 +17,8 @@ import type { Company } from "@/types";
 import type { BatchScoreMap } from "@/app/api/scores/batch/route";
 import type { TechnicalResult } from "@/lib/technicalAnalysis";
 import { cats } from "@/data/categories";
-import type { SavedPortfolio, Mode } from "@/lib/portfolios";
+import type { SavedPortfolio, Mode, InvestmentRecord } from "@/lib/portfolios";
+import InvestModal from "./InvestModal";
 
 const CATEGORY_FACTORS: Record<string, Record<Mode, number>> = {
   future:  { aggressive: 1.50, balanced: 1.20, conservative: 0.50 },
@@ -59,6 +60,7 @@ interface Props {
   initial?: SavedPortfolio;
   onClose?: () => void;
   onSaved?: (p: SavedPortfolio) => void;
+  onInvested?: (id: string, record: InvestmentRecord) => void;
 }
 
 function signalColor(signal: string) {
@@ -81,7 +83,7 @@ function scoreColor(score: number, max: number) {
 
 const CUSTOM_KEY = "finance-custom-companies";
 
-export default function PortfolioDashboard({ sheetMode, initial, onClose, onSaved }: Props) {
+export default function PortfolioDashboard({ sheetMode, initial, onClose, onSaved, onInvested }: Props) {
   const [companies, setCompanies]       = useState<Company[]>([]);
   const [scores, setScores]             = useState<BatchScoreMap>({});
   const [technicals, setTechnicals]     = useState<Record<string, TechnicalResult>>({});
@@ -101,6 +103,10 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
   const [saveOpen, setSaveOpen]   = useState(false);
   const [saveName, setSaveName]   = useState(initial?.name ?? "");
   const saveInputRef = useRef<HTMLInputElement>(null);
+
+  // IBKR
+  const [ibkrConnected, setIbkrConnected] = useState(false);
+  const [investOpen, setInvestOpen]       = useState(false);
 
   useEffect(() => {
     const saved: Company[] = JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? "[]");
@@ -150,6 +156,22 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
         setLoading(false);
       })
       .catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    async function poll() {
+      try {
+        const res = await fetch("/api/ibkr/status");
+        const data = await res.json();
+        if (alive) setIbkrConnected(!!data.connected);
+      } catch {
+        if (alive) setIbkrConnected(false);
+      }
+    }
+    poll();
+    const id = setInterval(poll, 30_000);
+    return () => { alive = false; clearInterval(id); };
   }, []);
 
   function handleSave() {
@@ -378,6 +400,24 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
             ))}
           </select>
         </div>
+
+        {/* IBKR connection dot (sheet mode) */}
+        {sheetMode && (
+          <div className="flex items-center gap-1.5 shrink-0" title={ibkrConnected ? "IBKR connected" : "IBKR not connected"}>
+            <div className={`h-2 w-2 rounded-full ${ibkrConnected ? "bg-emerald-400" : "bg-gray-700"}`} />
+            <span className="text-xs text-gray-600">{ibkrConnected ? "IBKR" : "No IBKR"}</span>
+          </div>
+        )}
+
+        {/* Invest button (sheet mode, IBKR connected) */}
+        {sheetMode && ibkrConnected && !loading && displayRows.length > 0 && (
+          <button
+            onClick={() => setInvestOpen(true)}
+            className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-600 transition-colors shrink-0"
+          >
+            Invest ↗
+          </button>
+        )}
 
         {/* Save button (sheet mode only) */}
         {sheetMode && onSaved && (
@@ -664,6 +704,22 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
           </div>
         </div>
       </div>
+
+      {/* Invest modal */}
+      {investOpen && (
+        <InvestModal
+          allocations={displayRows.map((r) => ({
+            ticker: r.company.ticker,
+            name: r.company.name,
+            dollar: r.dollar,
+          }))}
+          onClose={() => setInvestOpen(false)}
+          onInvested={(record) => {
+            setInvestOpen(false);
+            if (initial && onInvested) onInvested(initial.id, record);
+          }}
+        />
+      )}
     </div>
   );
 }
