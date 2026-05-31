@@ -2,8 +2,13 @@ import { NextResponse } from "next/server";
 import YFDefault from "yahoo-finance2";
 import type { InvestedPosition } from "@/lib/portfolios";
 
+type Quote = { date: Date | string; close: number | null };
+type ChartResult = { quotes: Quote[] };
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const yf = YFDefault as any;
+const yf = new (YFDefault as any)({ suppressNotices: ["ripHistorical"] }) as {
+  chart(symbol: string, opts: Record<string, unknown>): Promise<ChartResult>;
+};
 
 interface DataPoint {
   date: string;
@@ -23,10 +28,8 @@ export async function POST(req: Request) {
 
     const startDate = new Date(investedAt);
     const endDate   = new Date();
-
     const totalCostBasis = positions.reduce((s, p) => s + p.dollarInvested, 0);
 
-    // Fetch daily closes for every position since investment date
     const histories = await Promise.all(
       positions.map(async (pos) => {
         try {
@@ -35,20 +38,19 @@ export async function POST(req: Request) {
             period2: endDate,
             interval: "1d",
           });
-          const quotes: { date: string; close: number }[] = (result?.quotes ?? [])
-            .filter((q: { close?: number }) => q.close != null)
-            .map((q: { date: Date | string; close: number }) => ({
+          const quotes = (result?.quotes ?? [])
+            .filter((q) => q.close != null)
+            .map((q) => ({
               date: new Date(q.date).toISOString().slice(0, 10),
-              close: q.close,
+              close: q.close as number,
             }));
-          return { ticker: pos.ticker, shares: pos.shares, quotes };
+          return { shares: pos.shares, quotes };
         } catch {
-          return { ticker: pos.ticker, shares: pos.shares, quotes: [] };
+          return { shares: pos.shares, quotes: [] };
         }
       })
     );
 
-    // Build a date → portfolio value map
     const dateMap: Record<string, number> = {};
     for (const { shares, quotes } of histories) {
       for (const { date, close } of quotes) {
@@ -63,9 +65,9 @@ export async function POST(req: Request) {
         const pnlPct = totalCostBasis > 0 ? (pnl / totalCostBasis) * 100 : 0;
         return {
           date,
-          value: parseFloat(value.toFixed(2)),
-          pnl:   parseFloat(pnl.toFixed(2)),
-          pnlPct: parseFloat(pnlPct.toFixed(2)),
+          value:   parseFloat(value.toFixed(2)),
+          pnl:     parseFloat(pnl.toFixed(2)),
+          pnlPct:  parseFloat(pnlPct.toFixed(2)),
         };
       });
 

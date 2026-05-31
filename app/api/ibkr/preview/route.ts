@@ -3,7 +3,9 @@ import { getAccounts, searchContract, getPrice, tickle, MOCK_MODE } from "@/lib/
 import YFDefault from "yahoo-finance2";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const yf = YFDefault as any;
+const yf = new (YFDefault as any)({ suppressNotices: ["ripHistorical"] }) as {
+  quote(symbol: string): Promise<{ regularMarketPrice?: number }>;
+};
 
 interface AllocInput {
   ticker: string;
@@ -21,7 +23,7 @@ export async function POST(req: Request) {
         allocations.map(async ({ ticker, name, dollar }) => {
           try {
             const quote = await yf.quote(ticker);
-            const price: number = (quote?.regularMarketPrice as number) ?? 0;
+            const price = quote?.regularMarketPrice ?? 0;
             if (!price) return { ticker, name, dollar, error: "Price unavailable" };
             const shares = Math.floor(dollar / price);
             return {
