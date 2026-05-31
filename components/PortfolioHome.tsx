@@ -46,8 +46,10 @@ export default function PortfolioHome() {
   const [sheetOpen, setSheetOpen]     = useState(false);
   const [sheetMounted, setSheetMounted] = useState(false);
   const [active, setActive]           = useState<SavedPortfolio | null>(null);
-  const [ibkrConnected, setIbkrConnected] = useState<boolean | null>(null);
-  const [ibkrPaper, setIbkrPaper]         = useState(false);
+  const [ibkrConnected, setIbkrConnected]   = useState<boolean | null>(null);
+  const [ibkrPaper, setIbkrPaper]           = useState(false);
+  const [ibkrNeedsLogin, setIbkrNeedsLogin] = useState(false);
+  const [ibkrGateway, setIbkrGateway]       = useState(false);
   const [pnlMap, setPnlMap]           = useState<Record<string, PnLResult>>({});
 
   useEffect(() => {
@@ -61,7 +63,12 @@ export default function PortfolioHome() {
       try {
         const res = await fetch("/api/ibkr/status");
         const data = await res.json();
-        if (alive) { setIbkrConnected(!!data.connected); setIbkrPaper(!!data.paper); }
+        if (alive) {
+          setIbkrConnected(!!data.connected);
+          setIbkrPaper(!!data.paper);
+          setIbkrNeedsLogin(!!data.needsLogin);
+          setIbkrGateway(!!data.gatewayReachable);
+        }
       } catch {
         if (alive) setIbkrConnected(false);
       }
@@ -151,24 +158,32 @@ export default function PortfolioHome() {
         <div className="flex-1" />
 
         {/* IBKR status */}
-        <div
-          className="flex items-center gap-1.5 text-xs"
-          title={
-            ibkrConnected === null ? "Checking IBKR…" :
-            ibkrConnected ? "IBKR Client Portal connected" :
-            "IBKR not connected — start the Client Portal Gateway"
-          }
-        >
-          <div className={`h-2 w-2 rounded-full transition-colors ${
-            ibkrConnected === null ? "bg-gray-600 animate-pulse" :
-            ibkrConnected ? "bg-emerald-400" : "bg-red-700"
-          }`} />
-          <span className={`${ibkrConnected ? "text-gray-400" : "text-gray-600"}`}>
-            {ibkrConnected === null ? "IBKR…" :
-             ibkrConnected && ibkrPaper ? "IBKR Paper" :
-             ibkrConnected ? "IBKR" : "IBKR offline"}
-          </span>
-        </div>
+        {ibkrConnected === null ? (
+          <div className="flex items-center gap-1.5 text-xs text-gray-600">
+            <div className="h-2 w-2 rounded-full bg-gray-700 animate-pulse" />
+            IBKR…
+          </div>
+        ) : ibkrConnected ? (
+          <div className="flex items-center gap-1.5 text-xs text-gray-400">
+            <div className="h-2 w-2 rounded-full bg-emerald-400" />
+            {ibkrPaper ? "IBKR Paper" : "IBKR Live"}
+          </div>
+        ) : ibkrNeedsLogin ? (
+          <a
+            href="https://localhost:5000"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 rounded-lg border border-yellow-700/40 bg-yellow-900/20 px-2.5 py-1 text-xs text-yellow-400 hover:border-yellow-600 transition-colors"
+          >
+            <div className="h-2 w-2 rounded-full bg-yellow-400" />
+            Login to IBKR →
+          </a>
+        ) : (
+          <div className="flex items-center gap-1.5 text-xs text-gray-600" title="Start the IBKR Client Portal Gateway">
+            <div className="h-2 w-2 rounded-full bg-red-800" />
+            IBKR offline
+          </div>
+        )}
 
         <Link
           href="/market"

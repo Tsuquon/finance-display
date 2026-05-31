@@ -106,6 +106,7 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
 
   // IBKR
   const [ibkrConnected, setIbkrConnected] = useState(false);
+  const [ibkrNeedsLogin, setIbkrNeedsLogin] = useState(false);
   const [investOpen, setInvestOpen]       = useState(false);
 
   useEffect(() => {
@@ -164,7 +165,7 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
       try {
         const res = await fetch("/api/ibkr/status");
         const data = await res.json();
-        if (alive) setIbkrConnected(!!data.connected);
+        if (alive) { setIbkrConnected(!!data.connected); setIbkrNeedsLogin(!!data.needsLogin); }
       } catch {
         if (alive) setIbkrConnected(false);
       }
@@ -401,12 +402,29 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
           </select>
         </div>
 
-        {/* IBKR connection dot (sheet mode) */}
+        {/* IBKR connection indicator (sheet mode) */}
         {sheetMode && (
-          <div className="flex items-center gap-1.5 shrink-0" title={ibkrConnected ? "IBKR connected" : "IBKR not connected"}>
-            <div className={`h-2 w-2 rounded-full ${ibkrConnected ? "bg-emerald-400" : "bg-gray-700"}`} />
-            <span className="text-xs text-gray-600">{ibkrConnected ? "IBKR" : "No IBKR"}</span>
-          </div>
+          ibkrConnected ? (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <div className="h-2 w-2 rounded-full bg-emerald-400" />
+              <span className="text-xs text-gray-400">IBKR</span>
+            </div>
+          ) : ibkrNeedsLogin ? (
+            <a
+              href="https://localhost:5000"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 rounded-md border border-yellow-700/40 bg-yellow-900/20 px-2 py-1 text-xs text-yellow-400 hover:border-yellow-600 transition-colors shrink-0"
+            >
+              <div className="h-1.5 w-1.5 rounded-full bg-yellow-400" />
+              Login to IBKR →
+            </a>
+          ) : (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <div className="h-2 w-2 rounded-full bg-red-800" />
+              <span className="text-xs text-gray-600">IBKR offline</span>
+            </div>
+          )
         )}
 
         {/* Invest button (sheet mode, IBKR connected) */}
