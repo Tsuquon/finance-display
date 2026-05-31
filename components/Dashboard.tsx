@@ -229,10 +229,10 @@ export default function Dashboard() {
           </div>
 
           <Link
-            href="/portfolio"
+            href="/"
             className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800/60 px-3 py-1.5 text-sm font-semibold text-gray-400 transition-colors hover:border-gray-500 hover:text-white"
           >
-            <span>◈</span> Portfolio
+            <span>◈</span> Portfolios
           </Link>
 
           <button

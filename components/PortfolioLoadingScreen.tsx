@@ -7,6 +7,7 @@ interface Props {
   techTotal: number;
   scoresReady: boolean;
   companiesReady: boolean;
+  contained?: boolean; // absolute positioning (for sheet mode)
 }
 
 function Spinner() {
@@ -35,6 +36,7 @@ export default function PortfolioLoadingScreen({
   techTotal,
   scoresReady,
   companiesReady,
+  contained,
 }: Props) {
   const [visible, setVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -90,7 +92,7 @@ export default function PortfolioLoadingScreen({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-10"
+      className={`${contained ? "absolute inset-0 z-10" : "fixed inset-0 z-50"} flex flex-col items-center justify-center gap-10`}
       style={{
         background: "#161310",
         animation: allDone

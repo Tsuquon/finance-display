@@ -17,21 +17,7 @@ import type { Company } from "@/types";
 import type { BatchScoreMap } from "@/app/api/scores/batch/route";
 import type { TechnicalResult } from "@/lib/technicalAnalysis";
 import { cats } from "@/data/categories";
-
-type Mode = "aggressive" | "balanced" | "conservative";
-
-const PORTFOLIOS_KEY = "finance-saved-portfolios";
-
-interface SavedPortfolio {
-  id: string;
-  name: string;
-  savedAt: number;
-  mode: Mode;
-  portfolioSize: string;
-  maxPositions: number;
-  minAlloc: number;
-  excluded: string[];
-}
+import type { SavedPortfolio, Mode } from "@/lib/portfolios";
 
 const CATEGORY_FACTORS: Record<string, Record<Mode, number>> = {
   future:  { aggressive: 1.50, balanced: 1.20, conservative: 0.50 },
@@ -68,6 +54,13 @@ interface AllocRow {
   signal: string;
 }
 
+interface Props {
+  sheetMode?: boolean;
+  initial?: SavedPortfolio;
+  onClose?: () => void;
+  onSaved?: (p: SavedPortfolio) => void;
+}
+
 function signalColor(signal: string) {
   switch (signal) {
     case "strong-buy":  return "text-emerald-400";
@@ -88,7 +81,7 @@ function scoreColor(score: number, max: number) {
 
 const CUSTOM_KEY = "finance-custom-companies";
 
-export default function PortfolioDashboard() {
+export default function PortfolioDashboard({ sheetMode, initial, onClose, onSaved }: Props) {
   const [companies, setCompanies]       = useState<Company[]>([]);
   const [scores, setScores]             = useState<BatchScoreMap>({});
   const [technicals, setTechnicals]     = useState<Record<string, TechnicalResult>>({});
@@ -97,15 +90,16 @@ export default function PortfolioDashboard() {
   const [scoresReady, setScoresReady]   = useState(false);
   const [techProgress, setTechProgress] = useState(0);
   const [techTotal, setTechTotal]       = useState(0);
-  const [mode, setMode]               = useState<Mode>("balanced");
-  const [portfolioSize, setPortfolioSize] = useState("10000");
-  const [minAlloc, setMinAlloc]       = useState(1);
-  const [maxPositions, setMaxPositions] = useState(0); // 0 = no limit
-  const [excluded, setExcluded]       = useState<Set<string>>(new Set());
 
-  const [savedPortfolios, setSavedPortfolios] = useState<SavedPortfolio[]>([]);
-  const [showDrawer, setShowDrawer]           = useState(false);
-  const [saveName, setSaveName]               = useState("");
+  const [mode, setMode]               = useState<Mode>(initial?.mode ?? "balanced");
+  const [portfolioSize, setPortfolioSize] = useState(initial?.portfolioSize ?? "10000");
+  const [minAlloc, setMinAlloc]       = useState(initial?.minAlloc ?? 1);
+  const [maxPositions, setMaxPositions] = useState(initial?.maxPositions ?? 0);
+  const [excluded, setExcluded]       = useState<Set<string>>(new Set(initial?.excluded ?? []));
+
+  // Save overlay
+  const [saveOpen, setSaveOpen]   = useState(false);
+  const [saveName, setSaveName]   = useState(initial?.name ?? "");
   const saveInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -158,15 +152,11 @@ export default function PortfolioDashboard() {
       .catch(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    const stored = localStorage.getItem(PORTFOLIOS_KEY);
-    if (stored) setSavedPortfolios(JSON.parse(stored));
-  }, []);
-
-  function savePortfolio() {
-    const name = saveName.trim() || `Portfolio ${savedPortfolios.length + 1}`;
-    const portfolio: SavedPortfolio = {
-      id: Date.now().toString(),
+  function handleSave() {
+    if (!onSaved) return;
+    const name = saveName.trim() || `Portfolio ${Date.now()}`;
+    onSaved({
+      id: initial?.id ?? Date.now().toString(),
       name,
       savedAt: Date.now(),
       mode,
@@ -174,26 +164,7 @@ export default function PortfolioDashboard() {
       maxPositions,
       minAlloc,
       excluded: [...excluded],
-    };
-    const updated = [...savedPortfolios, portfolio];
-    setSavedPortfolios(updated);
-    localStorage.setItem(PORTFOLIOS_KEY, JSON.stringify(updated));
-    setSaveName("");
-  }
-
-  function loadPortfolio(p: SavedPortfolio) {
-    setMode(p.mode);
-    setPortfolioSize(p.portfolioSize);
-    setMaxPositions(p.maxPositions);
-    setMinAlloc(p.minAlloc);
-    setExcluded(new Set(p.excluded));
-    setShowDrawer(false);
-  }
-
-  function deletePortfolio(id: string) {
-    const updated = savedPortfolios.filter((p) => p.id !== id);
-    setSavedPortfolios(updated);
-    localStorage.setItem(PORTFOLIOS_KEY, JSON.stringify(updated));
+    });
   }
 
   const portfolioNum = useMemo(() => {
@@ -236,15 +207,12 @@ export default function PortfolioDashboard() {
 
     if (rows.length === 0) return [];
 
-    // Keep only the top N by raw score when a limit is set
     rows.sort((a, b) => b.rawScore - a.rawScore);
     const capped = maxPositions > 0 ? rows.slice(0, maxPositions) : rows;
 
-    // Normalize to 100%
     let totalRaw = capped.reduce((s, r) => s + r.rawScore, 0);
     let normalized = capped.map((r) => ({ ...r, allocation: (r.rawScore / totalRaw) * 100 }));
 
-    // Cap each position at MAX_POSITION% and redistribute excess (up to 5 iterations)
     for (let iter = 0; iter < 5; iter++) {
       const overCap = normalized.filter((r) => r.allocation > MAX_POSITION);
       if (overCap.length === 0) break;
@@ -288,23 +256,64 @@ export default function PortfolioDashboard() {
   });
 
   return (
-    <div className="h-screen overflow-y-auto bg-gray-950 text-white">
+    <div className={`${sheetMode ? "h-full" : "h-screen"} relative overflow-y-auto bg-gray-950 text-white`}>
       {loading && (
         <PortfolioLoadingScreen
           companiesReady={companiesReady}
           scoresReady={scoresReady}
           techProgress={techProgress}
           techTotal={techTotal}
+          contained={sheetMode}
         />
       )}
+
+      {/* Save overlay (sheet mode) */}
+      {saveOpen && (
+        <div className="absolute inset-0 z-20 flex items-start justify-center pt-20 bg-black/60">
+          <div className="rounded-2xl border border-gray-700 bg-gray-900 p-6 w-80 shadow-2xl space-y-4">
+            <h3 className="text-sm font-bold text-white">Save Portfolio</h3>
+            <input
+              ref={saveInputRef}
+              type="text"
+              placeholder="Portfolio name"
+              value={saveName}
+              onChange={(e) => setSaveName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") setSaveOpen(false); }}
+              autoFocus
+              className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSaveOpen(false)}
+                className="flex-1 rounded-lg border border-gray-700 bg-gray-800 py-2 text-xs font-semibold text-gray-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                className="flex-1 rounded-lg bg-indigo-600 py-2 text-xs font-semibold text-white hover:bg-indigo-500 transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Header ── */}
       <header className="sticky top-0 z-10 border-b border-gray-800 bg-gray-950/90 backdrop-blur px-6 py-3 flex items-center gap-4 flex-wrap">
-        <Link
-          href="/"
-          className="text-gray-500 hover:text-white text-sm transition-colors shrink-0"
-        >
-          ← Back
-        </Link>
+        {sheetMode ? (
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-white text-sm transition-colors shrink-0"
+          >
+            ✕
+          </button>
+        ) : (
+          <Link href="/" className="text-gray-500 hover:text-white text-sm transition-colors shrink-0">
+            ← Back
+          </Link>
+        )}
         <h1 className="text-lg font-bold tracking-tight shrink-0">Portfolio Allocation</h1>
         <div className="flex-1" />
 
@@ -370,125 +379,16 @@ export default function PortfolioDashboard() {
           </select>
         </div>
 
-        {/* Portfolios drawer button */}
-        <button
-          onClick={() => {
-            setShowDrawer(true);
-            setTimeout(() => saveInputRef.current?.focus(), 50);
-          }}
-          className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs font-semibold text-gray-300 hover:border-gray-500 hover:text-white transition-colors shrink-0"
-        >
-          <span>◈</span>
-          <span>Portfolios</span>
-          {savedPortfolios.length > 0 && (
-            <span className="ml-0.5 rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] text-white leading-none">
-              {savedPortfolios.length}
-            </span>
-          )}
-        </button>
+        {/* Save button (sheet mode only) */}
+        {sheetMode && onSaved && (
+          <button
+            onClick={() => { setSaveOpen(true); setTimeout(() => saveInputRef.current?.focus(), 50); }}
+            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 transition-colors shrink-0"
+          >
+            Save
+          </button>
+        )}
       </header>
-
-      {/* ── Portfolios Drawer ── */}
-      {showDrawer && (
-        <div className="fixed inset-0 z-30 flex justify-end">
-          <div
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setShowDrawer(false)}
-          />
-          <div className="relative z-10 flex h-full w-80 flex-col border-l border-gray-800 bg-gray-950 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
-              <h2 className="text-sm font-bold text-white">Saved Portfolios</h2>
-              <button
-                onClick={() => setShowDrawer(false)}
-                className="text-gray-500 hover:text-white transition-colors"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Save current */}
-            <div className="border-b border-gray-800 px-5 py-4 space-y-2">
-              <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider">Save Current</p>
-              <div className="flex gap-2">
-                <input
-                  ref={saveInputRef}
-                  type="text"
-                  placeholder={`Portfolio ${savedPortfolios.length + 1}`}
-                  value={saveName}
-                  onChange={(e) => setSaveName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && savePortfolio()}
-                  className="flex-1 rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:border-indigo-500 focus:outline-none"
-                />
-                <button
-                  onClick={savePortfolio}
-                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 transition-colors"
-                >
-                  Save
-                </button>
-              </div>
-              <p className="text-[10px] text-gray-600">
-                Saves: {mode} · ${portfolioSize} · {maxPositions > 0 ? `${maxPositions} positions` : "all positions"} · min {minAlloc}%{excluded.size > 0 ? ` · ${excluded.size} excluded` : ""}
-              </p>
-            </div>
-
-            {/* Portfolio list */}
-            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-              {savedPortfolios.length === 0 ? (
-                <p className="text-xs text-gray-600 text-center pt-6">No saved portfolios yet.</p>
-              ) : (
-                [...savedPortfolios].reverse().map((p) => (
-                  <div
-                    key={p.id}
-                    className="rounded-xl border border-gray-800 bg-gray-900/60 p-4 space-y-2"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-semibold text-white truncate">{p.name}</p>
-                      <button
-                        onClick={() => deletePortfolio(p.id)}
-                        title="Delete"
-                        className="shrink-0 text-gray-700 hover:text-red-400 transition-colors text-xs leading-none mt-0.5"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5 text-[10px]">
-                      <span className={`rounded-md px-1.5 py-0.5 font-semibold ${
-                        p.mode === "aggressive" ? "bg-red-900/40 text-red-400" :
-                        p.mode === "balanced"   ? "bg-indigo-900/40 text-indigo-400" :
-                                                   "bg-amber-900/40 text-amber-400"
-                      }`}>
-                        {p.mode}
-                      </span>
-                      <span className="rounded-md bg-gray-800 px-1.5 py-0.5 text-gray-400 font-mono">
-                        ${parseInt(p.portfolioSize).toLocaleString()}
-                      </span>
-                      <span className="rounded-md bg-gray-800 px-1.5 py-0.5 text-gray-400">
-                        {p.maxPositions > 0 ? `${p.maxPositions} pos` : "all pos"}
-                      </span>
-                      {p.excluded.length > 0 && (
-                        <span className="rounded-md bg-gray-800 px-1.5 py-0.5 text-gray-500">
-                          −{p.excluded.length} excl
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-gray-600">
-                        {new Date(p.savedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                      </span>
-                      <button
-                        onClick={() => loadPortfolio(p)}
-                        className="rounded-lg bg-gray-800 px-3 py-1 text-xs font-semibold text-gray-300 hover:bg-indigo-600 hover:text-white transition-colors"
-                      >
-                        Load
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="px-6 py-5 space-y-5 max-w-7xl mx-auto">
         {/* ── Summary strip ── */}
@@ -738,7 +638,7 @@ export default function PortfolioDashboard() {
                 </li>
                 <li>
                   <span className="text-gray-300">Min display</span> — positions below {minAlloc}%
-                  are hidden but still influence others' allocations
+                  are hidden but still influence others&apos; allocations
                 </li>
                 <li>
                   <span className="text-gray-300">Exclusions</span> — removed entirely before
