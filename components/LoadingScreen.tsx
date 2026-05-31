@@ -80,8 +80,7 @@ export default function LoadingScreen({ visible, tokens = 0 }: { visible: boolea
       setStep(MILESTONES.length - 1);
       const done = setTimeout(() => setAllDone(true), 600);
       const fade = setTimeout(() => setFading(true), 800);
-      const hide = setTimeout(() => setMounted(false), 1500);
-      return () => { clearTimeout(done); clearTimeout(fade); clearTimeout(hide); };
+      return () => { clearTimeout(done); clearTimeout(fade); };
     }
   }, [visible]);
 
@@ -93,12 +92,16 @@ export default function LoadingScreen({ visible, tokens = 0 }: { visible: boolea
   return (
     <div
       className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-10"
+      // pointer-events: none as soon as we're done so nothing is ever blocked
       style={{
         background: "#161310",
         animation: fading
           ? "loader-fade-out 0.7s ease forwards"
           : "loader-fade-in 0.4s ease forwards",
+        pointerEvents: allDone ? "none" : undefined,
       }}
+      // Remove from DOM once the fade-out animation actually finishes
+      onAnimationEnd={() => { if (fading) setMounted(false); }}
     >
       {/* Logo */}
       <svg viewBox="-210 -210 420 420" width="160" height="160" fill="none" xmlns="http://www.w3.org/2000/svg">
