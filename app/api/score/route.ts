@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Company } from "@/types";
+import { scoreStore, SCORE_TTL } from "@/lib/scoreStore";
 
 const anthropic = new Anthropic();
 
@@ -11,7 +12,7 @@ export type ScoreResult = {
 
 type CacheEntry = { data: ScoreResult; at: number };
 const cache = new Map<string, CacheEntry>();
-const TTL = 60 * 60 * 1000; // 1 hour
+const TTL = SCORE_TTL;
 
 const SYSTEM = `You are an equity analyst. Given a company profile, return ONLY a JSON object (no markdown):
 {"shortTerm":{"score":N,"rationale":"one sentence max 15 words"},"longTerm":{"score":N,"rationale":"one sentence max 15 words"}}
@@ -23,6 +24,12 @@ Base scores on category, thesis, signals, and typical fundamentals for this comp
 
 export async function POST(req: NextRequest) {
   const company: Company = await req.json();
+
+  // Prefer the shared store written by the batch route — guarantees card & panel show the same number
+  const shared = scoreStore.get(company.ticker);
+  if (shared && Date.now() - shared.at < TTL) {
+    return NextResponse.json(shared.data);
+  }
 
   const hit = cache.get(company.ticker);
   if (hit && Date.now() - hit.at < TTL) {
@@ -51,6 +58,8 @@ Signals: ${company.signals.map((s) => `[${s.type}] ${s.text}`).join("; ")}`;
   result.shortTerm.score = Math.min(10, Math.max(1, Math.round(result.shortTerm.score)));
   result.longTerm.score = Math.min(10, Math.max(1, Math.round(result.longTerm.score)));
 
-  cache.set(company.ticker, { data: result, at: Date.now() });
+  const now = Date.now();
+  cache.set(company.ticker, { data: result, at: now });
+  scoreStore.set(company.ticker, { data: result, at: now });
   return NextResponse.json(result);
 }

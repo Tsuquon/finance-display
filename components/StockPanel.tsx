@@ -30,14 +30,20 @@ export default function StockPanel({ company, onClose }: Props) {
   const [range, setRange] = useState<TimeRange>("1M");
   const [data, setData] = useState<StockDataPoint[]>([]);
   const [chartLoading, setChartLoading] = useState(true);
+  const [chartError, setChartError] = useState(false);
   const cat = cats[company.category];
 
   useEffect(() => {
     setChartLoading(true);
+    setChartError(false);
     fetch(`/api/stock/${company.ticker}?range=${range}&category=${company.category}`)
       .then((r) => r.json())
-      .then(({ data: d }) => { setData(d ?? []); setChartLoading(false); })
-      .catch(() => setChartLoading(false));
+      .then(({ data: d, error }) => {
+        if (error || !d?.length) { setChartError(true); setData([]); }
+        else setData(d);
+        setChartLoading(false);
+      })
+      .catch(() => { setChartError(true); setChartLoading(false); });
   }, [company.ticker, company.category, range]);
 
   const currentPrice = data[data.length - 1]?.price ?? 0;
@@ -97,6 +103,10 @@ export default function StockPanel({ company, onClose }: Props) {
             {chartLoading ? (
               <div className="flex h-full items-center justify-center">
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-600 border-t-gray-300" />
+              </div>
+            ) : chartError ? (
+              <div className="flex h-full items-center justify-center text-xs text-gray-500">
+                No data available for this range
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%" debounce={50}>

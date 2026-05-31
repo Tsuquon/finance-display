@@ -2,23 +2,27 @@ import { NextRequest, NextResponse } from "next/server";
 import YFDefault from "yahoo-finance2";
 import type { TimeRange, CategoryKey, StockDataPoint } from "@/types";
 
+type Quote = { date: Date | string; close: number | null; volume: number | null };
+type ChartResult = { quotes: Quote[] };
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const yf = new (YFDefault as any)({ suppressNotices: ["ripHistorical"] }) as {
-  chart(
-    symbol: string,
-    opts: { period1: Date; interval: string }
-  ): Promise<{
-    quotes: Array<{ date: Date | string; close: number | null; volume: number | null }>;
-  }>;
+  chart(symbol: string, opts: Record<string, unknown>): Promise<ChartResult>;
 };
 
-const RANGE_CONFIG: Record<TimeRange, { days: number; interval: string }> = {
-  "1D": { days: 1,   interval: "5m"  },
+const RANGE_CONFIG: Record<Exclude<TimeRange, "1D">, { days: number; interval: string }> = {
   "1W": { days: 7,   interval: "1h"  },
   "1M": { days: 30,  interval: "1d"  },
   "3M": { days: 90,  interval: "1d"  },
   "1Y": { days: 365, interval: "1wk" },
 };
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms)),
+  ]);
+}
 
 function formatDate(raw: Date | string, range: TimeRange): string {
   const d = new Date(raw);
@@ -45,14 +49,22 @@ export async function GET(
     return NextResponse.json({ data: generateMockData(ticker, range, category) });
   }
 
-  const { days, interval } = RANGE_CONFIG[range];
-  const period1 = new Date();
-  period1.setDate(period1.getDate() - days);
-
   try {
-    const result = await yf.chart(ticker, { period1, interval });
+    let opts: Record<string, unknown>;
+    if (range === "1D") {
+      // Use Yahoo's built-in range — always returns the most recent trading day,
+      // even on weekends when period1=yesterday would return empty.
+      opts = { range: "1d", interval: "5m" };
+    } else {
+      const { days, interval } = RANGE_CONFIG[range];
+      const period1 = new Date();
+      period1.setDate(period1.getDate() - days);
+      opts = { period1, interval };
+    }
 
-    const data: StockDataPoint[] = result.quotes
+    const result = await withTimeout(yf.chart(ticker, opts), 12_000);
+
+    const data: StockDataPoint[] = (result.quotes ?? [])
       .filter((q) => q.close !== null)
       .map((q) => ({
         date: formatDate(q.date, range),

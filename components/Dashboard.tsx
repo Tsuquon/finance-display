@@ -7,6 +7,7 @@ import type { BatchScoreMap } from "@/app/api/scores/batch/route";
 import { cats } from "@/data/categories";
 import CompanyCard from "./CompanyCard";
 import NewsTicker from "./NewsTicker";
+import LoadingScreen from "./LoadingScreen";
 
 const StockPanel = dynamic(() => import("./StockPanel"), { ssr: false });
 const AIChat = dynamic(() => import("./AIChat"), { ssr: false });
@@ -144,6 +145,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
+      <LoadingScreen visible={loading} />
       {chatOpen && (
         <div className="w-80 shrink-0 z-30 flex flex-col">
           <AIChat companies={companies} onClose={() => setChatOpen(false)} />
@@ -258,12 +260,7 @@ export default function Dashboard() {
         </div>
 
         <div className="flex-1 overflow-auto px-6 py-4">
-          {loading ? (
-            <div className="flex h-64 flex-col items-center justify-center gap-3">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-600 border-t-indigo-400" />
-              <p className="text-sm text-gray-500">Loading top 50 most active companies…</p>
-            </div>
-          ) : filtered.length === 0 ? (
+          {filtered.length === 0 && !loading ? (
             <div className="flex h-64 items-center justify-center text-gray-600">
               No companies match your search.
             </div>

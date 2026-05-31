@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import YFDefault from "yahoo-finance2";
-import type { Company } from "@/types";
+import type { Company, Signal } from "@/types";
 import { normalizeIndustry } from "@/lib/normalizeIndustry";
+import { makeSignals } from "@/lib/makeSignals";
 
 const yf = new (YFDefault as any)({
   suppressNotices: ["ripHistorical", "yahooSurvey"],
@@ -34,7 +35,7 @@ type AIEntry = {
   industry: string;
   category: "future" | "stable" | "fading";
   reason: string;
-  signals: Array<{ text: string; type: "positive" | "negative" | "neutral" }>;
+  signal: Signal; // one qualitative signal only — quantitative ones come from real data
 };
 
 export async function GET() {
@@ -55,19 +56,16 @@ export async function GET() {
   const payload = equities.map((q) => ({
     ticker: q.symbol,
     name: q.shortName ?? q.longName ?? q.symbol,
-    changeToday: q.regularMarketChangePercent?.toFixed(2),
-    change52w: q.fiftyTwoWeekChangePercent?.toFixed(2),
-    analystRating: q.averageAnalystRating,
     marketCapB: q.marketCap ? (q.marketCap / 1e9).toFixed(1) : null,
-    trailingPE: q.trailingPE?.toFixed(1),
-    forwardPE: q.forwardPE?.toFixed(1),
   }));
 
-  const SYSTEM = `You are an equity analyst. Given market data for the most actively traded US stocks, return a JSON array (no markdown, no extra text) where each element is:
-{"ticker":"...","industry":"...","category":"future"|"stable"|"fading","reason":"one-sentence thesis (max 15 words)","signals":[{"text":"signal (max 10 words)","type":"positive"|"negative"|"neutral"},{"text":"...","type":"..."},{"text":"...","type":"..."}]}
+  const SYSTEM = `You are an equity analyst. Given a list of US equities, return a JSON array (no markdown, no extra text) where each element is:
+{"ticker":"...","industry":"...","category":"future"|"stable"|"fading","reason":"one-sentence thesis (max 15 words)","signal":{"text":"qualitative insight max 10 words","type":"positive"|"negative"|"neutral"}}
 
-industry must be exactly one of: Technology, Financials, Healthcare, Consumer, Industrials, Energy, Crypto, Media, Automotive
-category: future=high-growth/secular-tailwinds, stable=reliable-earnings/moat, fading=structural-headwinds/declining`;
+Rules:
+- industry must be exactly one of: Technology, Financials, Healthcare, Consumer, Industrials, Energy, Crypto, Media, Automotive
+- category: future=high-growth/secular-tailwinds, stable=reliable-earnings/moat, fading=structural-headwinds/declining
+- signal must be a qualitative competitive/macro observation only — do NOT mention P/E ratios, price changes, analyst ratings, or any specific numbers (those are shown separately from live data)`;
 
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
@@ -83,6 +81,12 @@ category: future=high-growth/secular-tailwinds, stable=reliable-earnings/moat, f
 
   const companies: Company[] = equities.map((q, i) => {
     const ai = aiMap.get(q.symbol);
+    const dataSignals = makeSignals(q);
+    const aiSignal = ai?.signal;
+    const signals = [
+      ...dataSignals,
+      ...(aiSignal ? [aiSignal] : []),
+    ].slice(0, 4);
     return {
       id: i + 1,
       ticker: q.symbol,
@@ -90,7 +94,7 @@ category: future=high-growth/secular-tailwinds, stable=reliable-earnings/moat, f
       industry: normalizeIndustry(ai?.industry),
       category: ai?.category ?? "stable",
       reason: ai?.reason ?? "",
-      signals: ai?.signals ?? [],
+      signals,
     };
   });
 
