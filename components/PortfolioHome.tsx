@@ -10,6 +10,7 @@ import {
   type InvestmentRecord,
   type InvestedPosition,
 } from "@/lib/portfolios";
+import PortfolioPnLChart from "./PortfolioPnLChart";
 
 const MODE_STYLES = {
   aggressive:   { bg: "bg-red-900/30",    text: "text-red-400",    label: "Aggressive"    },
@@ -46,6 +47,7 @@ export default function PortfolioHome() {
   const [sheetOpen, setSheetOpen]     = useState(false);
   const [sheetMounted, setSheetMounted] = useState(false);
   const [active, setActive]           = useState<SavedPortfolio | null>(null);
+  const [chartPortfolio, setChartPortfolio] = useState<SavedPortfolio | null>(null);
   const [ibkrConnected, setIbkrConnected]   = useState<boolean | null>(null);
   const [ibkrPaper, setIbkrPaper]           = useState(false);
   const [ibkrNeedsLogin, setIbkrNeedsLogin] = useState(false);
@@ -295,7 +297,11 @@ export default function PortfolioHome() {
 
                     {/* Investment status */}
                     {invested ? (
-                      <div className="rounded-xl border border-emerald-900/40 bg-emerald-950/30 px-3 py-2.5 space-y-1">
+                      <div
+                        className="rounded-xl border border-emerald-900/40 bg-emerald-950/30 px-3 py-2.5 space-y-1 cursor-pointer hover:border-emerald-700/60 transition-colors"
+                        onClick={() => setChartPortfolio(p)}
+                        title="View P&L chart"
+                      >
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-emerald-500 font-semibold flex items-center gap-1.5">
                             ● Invested {investDate}
@@ -363,6 +369,16 @@ export default function PortfolioHome() {
           )}
         </div>
       </main>
+
+      {/* ── P&L chart modal ── */}
+      {chartPortfolio?.investment && (
+        <PortfolioPnLChart
+          positions={chartPortfolio.investment.positions}
+          investedAt={chartPortfolio.investment.investedAt}
+          totalInvested={chartPortfolio.investment.totalInvested}
+          onClose={() => setChartPortfolio(null)}
+        />
+      )}
 
       {/* ── Bottom sheet ── */}
       {sheetMounted && (
