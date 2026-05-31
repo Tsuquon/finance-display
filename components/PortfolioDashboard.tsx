@@ -84,6 +84,8 @@ function scoreColor(score: number, max: number) {
 const CUSTOM_KEY = "finance-custom-companies";
 
 export default function PortfolioDashboard({ sheetMode, initial, onClose, onSaved, onInvested }: Props) {
+  // Existing portfolios are locked — settings can't be changed after creation
+  const locked = sheetMode && !!initial;
   const [companies, setCompanies]       = useState<Company[]>([]);
   const [scores, setScores]             = useState<BatchScoreMap>({});
   const [technicals, setTechnicals]     = useState<Record<string, TechnicalResult>>({});
@@ -349,15 +351,15 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
         <div className="flex-1" />
 
         {/* Mode selector */}
-        <div className="flex rounded-lg border border-gray-700 overflow-hidden shrink-0">
+        <div className={`flex rounded-lg border border-gray-700 overflow-hidden shrink-0 ${locked ? "opacity-60 pointer-events-none" : ""}`}>
           {(["aggressive", "balanced", "conservative"] as Mode[]).map((m) => (
             <button
               key={m}
-              onClick={() => setMode(m)}
+              onClick={() => !locked && setMode(m)}
               className={`px-3 py-1.5 text-xs font-semibold capitalize transition-colors ${
                 mode === m
                   ? "bg-indigo-600 text-white"
-                  : "bg-gray-900 text-gray-500 hover:text-white"
+                  : "bg-gray-900 text-gray-500"
               }`}
             >
               {m}
@@ -375,8 +377,9 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
             <input
               type="text"
               value={portfolioSize}
-              onChange={(e) => setPortfolioSize(e.target.value.replace(/[^0-9]/g, ""))}
-              className="w-28 rounded-lg border border-gray-700 bg-gray-800 pl-6 pr-2 py-1.5 text-xs text-white text-right font-mono focus:border-gray-500 focus:outline-none"
+              readOnly={locked}
+              onChange={(e) => !locked && setPortfolioSize(e.target.value.replace(/[^0-9]/g, ""))}
+              className={`w-28 rounded-lg border border-gray-700 bg-gray-800 pl-6 pr-2 py-1.5 text-xs text-white text-right font-mono focus:outline-none ${locked ? "opacity-60 cursor-default" : "focus:border-gray-500"}`}
             />
           </div>
         </div>
@@ -386,8 +389,9 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
           <span className="text-xs text-gray-500">Positions</span>
           <select
             value={maxPositions}
+            disabled={locked}
             onChange={(e) => setMaxPositions(Number(e.target.value))}
-            className="rounded-lg border border-gray-700 bg-gray-800 px-2 py-1.5 text-xs text-white focus:border-gray-500 focus:outline-none"
+            className={`rounded-lg border border-gray-700 bg-gray-800 px-2 py-1.5 text-xs text-white focus:outline-none ${locked ? "opacity-60 cursor-default" : "focus:border-gray-500"}`}
           >
             <option value={0}>All</option>
             {[3, 5, 8, 10, 15, 20].map((v) => (
@@ -401,8 +405,9 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
           <span className="text-xs text-gray-500">Min</span>
           <select
             value={minAlloc}
+            disabled={locked}
             onChange={(e) => setMinAlloc(Number(e.target.value))}
-            className="rounded-lg border border-gray-700 bg-gray-800 px-2 py-1.5 text-xs text-white focus:border-gray-500 focus:outline-none"
+            className={`rounded-lg border border-gray-700 bg-gray-800 px-2 py-1.5 text-xs text-white focus:outline-none ${locked ? "opacity-60 cursor-default" : "focus:border-gray-500"}`}
           >
             {[0.5, 1, 2, 3, 5].map((v) => (
               <option key={v} value={v}>{v}%</option>
@@ -445,14 +450,19 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
           </button>
         )}
 
-        {/* Save button (sheet mode only) */}
-        {sheetMode && onSaved && (
+        {/* Save button — only for new portfolios */}
+        {sheetMode && onSaved && !locked && (
           <button
             onClick={() => { setSaveOpen(true); setTimeout(() => saveInputRef.current?.focus(), 50); }}
             className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 transition-colors shrink-0"
           >
             Save
           </button>
+        )}
+
+        {/* Locked indicator */}
+        {locked && (
+          <span className="text-xs text-gray-600 shrink-0">Read only</span>
         )}
       </header>
 
@@ -562,7 +572,7 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
                   <th className="px-4 py-2.5 text-right font-semibold">AI LT</th>
                   <th className="px-4 py-2.5 text-right font-semibold">Tech</th>
                   <th className="px-4 py-2.5 text-right font-semibold">Signal</th>
-                  <th className="px-4 py-2.5 text-center font-semibold">Excl.</th>
+                  {!locked && <th className="px-4 py-2.5 text-center font-semibold">Excl.</th>}
                 </tr>
               </thead>
               <tbody>
@@ -621,17 +631,19 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
                       <td className={`px-4 py-3 text-right text-xs font-semibold ${signalColor(row.signal)}`}>
                         {SIGNAL_LABELS[row.signal] ?? row.signal}
                       </td>
-                      <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={() =>
-                            setExcluded((prev) => new Set([...prev, row.company.ticker]))
-                          }
-                          title={`Exclude ${row.company.ticker}`}
-                          className="text-xs text-gray-700 hover:text-red-400 transition-colors leading-none"
-                        >
-                          ✕
-                        </button>
-                      </td>
+                      {!locked && (
+                        <td className="px-4 py-3 text-center">
+                          <button
+                            onClick={() =>
+                              setExcluded((prev) => new Set([...prev, row.company.ticker]))
+                            }
+                            title={`Exclude ${row.company.ticker}`}
+                            className="text-xs text-gray-700 hover:text-red-400 transition-colors leading-none"
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -641,7 +653,7 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
         </div>
 
         {/* ── Excluded tickers ── */}
-        {excluded.size > 0 && (
+        {!locked && excluded.size > 0 && (
           <div className="rounded-xl border border-gray-800 bg-gray-900/40 px-5 py-3 flex items-center gap-3 flex-wrap">
             <span className="text-xs text-gray-500 shrink-0">Excluded:</span>
             {[...excluded].map((ticker) => (
