@@ -35,7 +35,7 @@ type AIEntry = {
   industry: string;
   category: "future" | "stable" | "fading";
   reason: string;
-  signal: Signal; // one qualitative signal only — quantitative ones come from real data
+  signal: Signal;
 };
 
 export async function GET() {
@@ -60,7 +60,7 @@ export async function GET() {
   }));
 
   const SYSTEM = `You are an equity analyst. Given a list of US equities, return a JSON array (no markdown, no extra text) where each element is:
-{"ticker":"...","industry":"...","category":"future"|"stable"|"fading","reason":"one-sentence thesis (max 15 words)","signal":{"text":"qualitative insight max 10 words","type":"positive"|"negative"|"neutral"}}
+{"ticker":"...","industry":"...","category":"future"|"stable"|"fading","reason":"one-sentence thesis (max 15 words)","signal":{"text":"qualitative insight max 10 words","type":"positive"|"negative"|"neutral","source":"publication or source max 4 words"}}
 
 Rules:
 - industry must be exactly one of: Technology, Financials, Healthcare, Consumer, Industrials, Energy, Crypto, Media, Automotive
@@ -81,7 +81,7 @@ Rules:
 
   const companies: Company[] = equities.map((q, i) => {
     const ai = aiMap.get(q.symbol);
-    const dataSignals = makeSignals(q);
+    const dataSignals = makeSignals(q, q.symbol);
     const aiSignal = ai?.signal;
     const signals = [
       ...dataSignals,
@@ -99,5 +99,8 @@ Rules:
   });
 
   cache = { data: companies, at: Date.now() };
-  return NextResponse.json(companies);
+  const totalTokens = (msg.usage.input_tokens ?? 0) + (msg.usage.output_tokens ?? 0);
+  return NextResponse.json(companies, {
+    headers: { "X-Tokens-Used": String(totalTokens) },
+  });
 }

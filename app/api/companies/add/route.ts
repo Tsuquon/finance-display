@@ -24,12 +24,13 @@ const yf = new (YFDefault as any)({
 const anthropic = new Anthropic();
 
 const SYSTEM = `You are an equity analyst. Given a stock ticker and name, return ONLY a JSON object (no markdown):
-{"industry":"...","category":"future"|"stable"|"fading","reason":"one-sentence thesis (max 15 words)","signal":{"text":"qualitative insight max 10 words","type":"positive"|"negative"|"neutral"}}
+{"industry":"...","category":"future"|"stable"|"fading","reason":"one-sentence thesis (max 15 words)","signal":{"text":"qualitative insight max 10 words","type":"positive"|"negative"|"neutral","source":"publication or source max 4 words"}}
 
 Rules:
 - industry must be exactly one of: Technology, Financials, Healthcare, Consumer, Industrials, Energy, Crypto, Media, Automotive
 - category: future=high-growth/secular-tailwinds, stable=reliable-earnings/moat, fading=structural-headwinds/declining
-- signal must be a qualitative competitive/macro observation only — do NOT mention P/E ratios, price changes, analyst ratings, or specific numbers`;
+- signal must be a qualitative competitive/macro observation only — do NOT mention P/E ratios, price changes, analyst ratings, or specific numbers
+- source should be a real publication, filing type, or data provider (e.g. "Earnings call", "Company filing", "Bloomberg", "Reuters", "SEC filing")`;
 
 export async function POST(req: NextRequest) {
   const { ticker, existingIds }: { ticker: string; existingIds: number[] } = await req.json();
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
 
   const newId = Math.max(0, ...existingIds) + 1;
 
-  const dataSignals = makeSignals(quote);
+  const dataSignals = makeSignals(quote, quote.symbol);
   const aiSignal = ai.signal;
   const signals = [
     ...dataSignals,

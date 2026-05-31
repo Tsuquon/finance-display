@@ -5,6 +5,8 @@ export type CategoryKey = "future" | "stable" | "fading";
 export interface Signal {
   text: string;
   type: "positive" | "negative" | "neutral";
+  source?: string;
+  sourceUrl?: string;
 }
 
 export interface Company {

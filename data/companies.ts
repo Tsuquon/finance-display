@@ -9,9 +9,9 @@ export const companies: Company[] = [
     ticker: "NVDA",
     reason: "Dominant AI chip supplier with insatiable datacenter demand",
     signals: [
-      { text: "H100/H200 GPU allocation sold out 12+ months", type: "positive" },
-      { text: "Blackwell architecture launch accelerating", type: "positive" },
-      { text: "China export restrictions limit TAM", type: "negative" },
+      { text: "H100/H200 GPU allocation sold out 12+ months", type: "positive", source: "Company guidance" },
+      { text: "Blackwell architecture launch accelerating", type: "positive", source: "Company announcement" },
+      { text: "China export restrictions limit TAM", type: "negative", source: "US Commerce Dept." },
     ],
   },
   {
@@ -22,9 +22,9 @@ export const companies: Company[] = [
     ticker: "TSLA",
     reason: "AI-driven autonomy and energy storage platform",
     signals: [
-      { text: "FSD v12 showing step-change improvement", type: "positive" },
-      { text: "Dojo supercomputer scaling rapidly", type: "positive" },
-      { text: "EV price wars compressing margins", type: "negative" },
+      { text: "FSD v12 showing step-change improvement", type: "positive", source: "Earnings call" },
+      { text: "Dojo supercomputer scaling rapidly", type: "positive", source: "Company presentation" },
+      { text: "EV price wars compressing margins", type: "negative", source: "Industry analysis" },
     ],
   },
   {
@@ -35,9 +35,9 @@ export const companies: Company[] = [
     ticker: "MSFT",
     reason: "Copilot integration across enterprise stack driving monetization",
     signals: [
-      { text: "Azure OpenAI capacity constraints easing", type: "positive" },
-      { text: "Copilot M365 seat growth accelerating", type: "positive" },
-      { text: "Gaming segment underperforming", type: "negative" },
+      { text: "Azure OpenAI capacity constraints easing", type: "positive", source: "Earnings call" },
+      { text: "Copilot M365 seat growth accelerating", type: "positive", source: "Company filing" },
+      { text: "Gaming segment underperforming", type: "negative", source: "Earnings report" },
     ],
   },
   {
@@ -48,9 +48,9 @@ export const companies: Company[] = [
     ticker: "V",
     reason: "Payments network with unmatched global penetration",
     signals: [
-      { text: "Cross-border volumes recovering strongly", type: "positive" },
-      { text: "Value-added services revenue growing 20%+", type: "positive" },
-      { text: "CBDC development poses long-term risk", type: "neutral" },
+      { text: "Cross-border volumes recovering strongly", type: "positive", source: "Earnings report" },
+      { text: "Value-added services revenue growing 20%+", type: "positive", source: "Company filing" },
+      { text: "CBDC development poses long-term risk", type: "neutral", source: "Industry analysis" },
     ],
   },
   {
@@ -61,9 +61,9 @@ export const companies: Company[] = [
     ticker: "JNJ",
     reason: "MedTech pivot post-consumer spinoff with durable pipeline",
     signals: [
-      { text: "Innovative medicine segment outperforming", type: "positive" },
-      { text: "Talc litigation mostly resolved", type: "positive" },
-      { text: "Patent cliff on key drugs approaching", type: "negative" },
+      { text: "Innovative medicine segment outperforming", type: "positive", source: "Earnings call" },
+      { text: "Talc litigation mostly resolved", type: "positive", source: "Court filings" },
+      { text: "Patent cliff on key drugs approaching", type: "negative", source: "Pipeline analysis" },
     ],
   },
   {
@@ -74,9 +74,9 @@ export const companies: Company[] = [
     ticker: "PG",
     reason: "Pricing power and brand portfolio deliver consistent FCF",
     signals: [
-      { text: "Volume recovery as pricing normalizes", type: "positive" },
-      { text: "Emerging market penetration accelerating", type: "positive" },
-      { text: "Private label competition intensifying", type: "negative" },
+      { text: "Volume recovery as pricing normalizes", type: "positive", source: "Earnings report" },
+      { text: "Emerging market penetration accelerating", type: "positive", source: "Company presentation" },
+      { text: "Private label competition intensifying", type: "negative", source: "Retail data" },
     ],
   },
   {
@@ -87,9 +87,9 @@ export const companies: Company[] = [
     ticker: "INTC",
     reason: "Foundry strategy lagging TSMC; AI chip offering uncompetitive",
     signals: [
-      { text: "18A process node delayed again", type: "negative" },
-      { text: "Gaudi AI accelerator losing datacentre deals", type: "negative" },
-      { text: "IDM 2.0 external customer wins modest", type: "neutral" },
+      { text: "18A process node delayed again", type: "negative", source: "Company update" },
+      { text: "Gaudi AI accelerator losing datacentre deals", type: "negative", source: "Industry reports" },
+      { text: "IDM 2.0 external customer wins modest", type: "neutral", source: "Company filing" },
     ],
   },
   {
@@ -100,9 +100,9 @@ export const companies: Company[] = [
     ticker: "DIS",
     reason: "Linear TV decline accelerating; streaming profitability uncertain",
     signals: [
-      { text: "Disney+ subscriber growth stalling", type: "negative" },
-      { text: "ESPN linear ratings declining", type: "negative" },
-      { text: "Parks remain bright spot for cash flow", type: "positive" },
+      { text: "Disney+ subscriber growth stalling", type: "negative", source: "Earnings report" },
+      { text: "ESPN linear ratings declining", type: "negative", source: "Nielsen data" },
+      { text: "Parks remain bright spot for cash flow", type: "positive", source: "Earnings call" },
     ],
   },
   {
@@ -113,9 +113,9 @@ export const companies: Company[] = [
     ticker: "WBA",
     reason: "Front-end retail and pharmacy reimbursement under structural pressure",
     signals: [
-      { text: "Store closure program accelerating", type: "negative" },
-      { text: "PBM reimbursement rates declining", type: "negative" },
-      { text: "VillageMD clinics underperforming targets", type: "negative" },
+      { text: "Store closure program accelerating", type: "negative", source: "Company announcement" },
+      { text: "PBM reimbursement rates declining", type: "negative", source: "Industry data" },
+      { text: "VillageMD clinics underperforming targets", type: "negative", source: "Earnings call" },
     ],
   },
   {
@@ -126,9 +126,9 @@ export const companies: Company[] = [
     ticker: "META",
     reason: "AI-driven ad targeting renaissance and Reality Labs long bet",
     signals: [
-      { text: "Llama open-source strategy building ecosystem moat", type: "positive" },
-      { text: "Threads gaining traction vs Twitter", type: "positive" },
-      { text: "Reality Labs burning $15B+ annually", type: "negative" },
+      { text: "Llama open-source strategy building ecosystem moat", type: "positive", source: "Company release" },
+      { text: "Threads gaining traction vs Twitter", type: "positive", source: "Third-party data" },
+      { text: "Reality Labs burning $15B+ annually", type: "negative", source: "Company filing" },
     ],
   },
   {
@@ -139,9 +139,9 @@ export const companies: Company[] = [
     ticker: "AAPL",
     reason: "Services flywheel and installed base compounding FCF generation",
     signals: [
-      { text: "Apple Intelligence differentiating upgrade cycle", type: "positive" },
-      { text: "India manufacturing diversification on track", type: "positive" },
-      { text: "China sales declining in competitive market", type: "negative" },
+      { text: "Apple Intelligence differentiating upgrade cycle", type: "positive", source: "Company announcement" },
+      { text: "India manufacturing diversification on track", type: "positive", source: "Supply chain data" },
+      { text: "China sales declining in competitive market", type: "negative", source: "Earnings call" },
     ],
   },
   {
@@ -152,9 +152,9 @@ export const companies: Company[] = [
     ticker: "GOOGL",
     reason: "Search monopoly plus nascent cloud AI monetization",
     signals: [
-      { text: "Gemini Ultra competitive with GPT-4", type: "positive" },
-      { text: "YouTube Shorts monetization improving", type: "positive" },
-      { text: "DOJ antitrust remedies creating uncertainty", type: "negative" },
+      { text: "Gemini Ultra competitive with GPT-4", type: "positive", source: "Company release" },
+      { text: "YouTube Shorts monetization improving", type: "positive", source: "Earnings call" },
+      { text: "DOJ antitrust remedies creating uncertainty", type: "negative", source: "Court filings" },
     ],
   },
   {
@@ -165,9 +165,9 @@ export const companies: Company[] = [
     ticker: "AMZN",
     reason: "AWS AI infrastructure and advertising revenue acceleration",
     signals: [
-      { text: "AWS growth re-accelerating to 17%+", type: "positive" },
-      { text: "Trainium2 chips reducing inference costs", type: "positive" },
-      { text: "Retail margins still thin outside ads", type: "neutral" },
+      { text: "AWS growth re-accelerating to 17%+", type: "positive", source: "Earnings report" },
+      { text: "Trainium2 chips reducing inference costs", type: "positive", source: "Company announcement" },
+      { text: "Retail margins still thin outside ads", type: "neutral", source: "Company filing" },
     ],
   },
   {
@@ -178,9 +178,9 @@ export const companies: Company[] = [
     ticker: "PFE",
     reason: "Post-COVID revenue cliff and pipeline needing major wins",
     signals: [
-      { text: "Paxlovid sales collapsing from COVID peak", type: "negative" },
-      { text: "Seagen acquisition costs weighing on FCF", type: "negative" },
-      { text: "Oncology pipeline has several late-stage assets", type: "positive" },
+      { text: "Paxlovid sales collapsing from COVID peak", type: "negative", source: "Earnings report" },
+      { text: "Seagen acquisition costs weighing on FCF", type: "negative", source: "Company filing" },
+      { text: "Oncology pipeline has several late-stage assets", type: "positive", source: "Pipeline analysis" },
     ],
   },
   {
@@ -191,9 +191,9 @@ export const companies: Company[] = [
     ticker: "F",
     reason: "EV transition losses mounting with no clear path to profitability",
     signals: [
-      { text: "Model e EV division losing $4.5B annually", type: "negative" },
-      { text: "F-150 Lightning demand below initial projections", type: "negative" },
-      { text: "Pro commercial vehicle segment strong", type: "positive" },
+      { text: "Model e EV division losing $4.5B annually", type: "negative", source: "Earnings report" },
+      { text: "F-150 Lightning demand below initial projections", type: "negative", source: "Company filing" },
+      { text: "Pro commercial vehicle segment strong", type: "positive", source: "Earnings call" },
     ],
   },
   {
@@ -204,9 +204,9 @@ export const companies: Company[] = [
     ticker: "JPM",
     reason: "Best-in-class management with fortress balance sheet",
     signals: [
-      { text: "Net interest income near peak but resilient", type: "positive" },
-      { text: "Investment banking recovery underway", type: "positive" },
-      { text: "CRE loan exposure being monitored", type: "neutral" },
+      { text: "Net interest income near peak but resilient", type: "positive", source: "Earnings call" },
+      { text: "Investment banking recovery underway", type: "positive", source: "Earnings report" },
+      { text: "CRE loan exposure being monitored", type: "neutral", source: "Regulatory filing" },
     ],
   },
   {
@@ -217,9 +217,9 @@ export const companies: Company[] = [
     ticker: "BRK.B",
     reason: "Massive cash hoard with optionality and insurance float compounding",
     signals: [
-      { text: "$168B cash pile earning 5%+ in T-bills", type: "positive" },
-      { text: "Succession clarity improving with Greg Abel", type: "positive" },
-      { text: "Apple position reduction creating uncertainty", type: "neutral" },
+      { text: "$168B cash pile earning 5%+ in T-bills", type: "positive", source: "Annual report" },
+      { text: "Succession clarity improving with Greg Abel", type: "positive", source: "Shareholder letter" },
+      { text: "Apple position reduction creating uncertainty", type: "neutral", source: "SEC filing" },
     ],
   },
   {
@@ -230,9 +230,9 @@ export const companies: Company[] = [
     ticker: "SPOT",
     reason: "Audio platform achieving operating leverage with podcast monetization",
     signals: [
-      { text: "First sustained profitability in company history", type: "positive" },
-      { text: "Audiobook expansion unlocking new TAM", type: "positive" },
-      { text: "Music label licensing costs structurally high", type: "negative" },
+      { text: "First sustained profitability in company history", type: "positive", source: "Earnings report" },
+      { text: "Audiobook expansion unlocking new TAM", type: "positive", source: "Company presentation" },
+      { text: "Music label licensing costs structurally high", type: "negative", source: "Industry analysis" },
     ],
   },
 ];

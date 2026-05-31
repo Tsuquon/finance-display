@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
+import Link from "next/link";
 import dynamic from "next/dynamic";
 import type { Company } from "@/types";
 import type { BatchScoreMap } from "@/app/api/scores/batch/route";
@@ -17,6 +18,7 @@ const CUSTOM_KEY = "finance-custom-companies";
 export default function Dashboard() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tokensUsed, setTokensUsed] = useState(0);
   const [selected, setSelected] = useState<Company | null>(null);
   const [search, setSearch] = useState("");
   const [industry, setIndustry] = useState("All");
@@ -38,8 +40,12 @@ export default function Dashboard() {
     const saved: Company[] = JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? "[]");
     setCustomTickers(new Set(saved.map((c) => c.ticker)));
     fetch("/api/companies")
-      .then((r) => r.json())
-      .then((data: Company[]) => {
+      .then((r) => {
+        const tok = r.headers.get("X-Tokens-Used");
+        if (tok) setTokensUsed(Number(tok));
+        return r.json() as Promise<Company[]>;
+      })
+      .then((data) => {
         const fetched = data.filter((c) => !saved.some((s) => s.ticker === c.ticker));
         setCompanies([...fetched, ...saved]);
         setLoading(false);
@@ -145,7 +151,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
-      <LoadingScreen visible={loading} />
+      <LoadingScreen visible={loading} tokens={tokensUsed} />
       {chatOpen && (
         <div className="w-80 shrink-0 z-30 flex flex-col">
           <AIChat companies={companies} onClose={() => setChatOpen(false)} />
@@ -221,6 +227,13 @@ export default function Dashboard() {
               </div>
             )}
           </div>
+
+          <Link
+            href="/portfolio"
+            className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800/60 px-3 py-1.5 text-sm font-semibold text-gray-400 transition-colors hover:border-gray-500 hover:text-white"
+          >
+            <span>◈</span> Portfolio
+          </Link>
 
           <button
             onClick={() => setChatOpen((o) => !o)}

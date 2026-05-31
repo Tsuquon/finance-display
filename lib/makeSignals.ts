@@ -10,7 +10,10 @@ interface QuoteData {
 // Generates factual signals from live Yahoo Finance data.
 // fiftyTwoWeekChangePercent arrives as a decimal fraction (0.45 = 45%) from both
 // the screener and quote APIs.
-export function makeSignals(q: QuoteData): Signal[] {
+export function makeSignals(q: QuoteData, ticker?: string): Signal[] {
+  const sourceUrl = ticker
+    ? `https://finance.yahoo.com/quote/${ticker}/key-statistics/`
+    : undefined;
   const signals: Signal[] = [];
 
   // P/E ratio — prefer trailing, fall back to forward
@@ -20,6 +23,8 @@ export function makeSignals(q: QuoteData): Signal[] {
     signals.push({
       text: `${label} ${pe.toFixed(1)}x`,
       type: pe > 60 ? "negative" : pe < 15 ? "positive" : "neutral",
+      source: "Yahoo Finance",
+      sourceUrl,
     });
   }
 
@@ -30,6 +35,8 @@ export function makeSignals(q: QuoteData): Signal[] {
     signals.push({
       text: `52-week return ${sign}${pct.toFixed(1)}%`,
       type: pct > 15 ? "positive" : pct < -15 ? "negative" : "neutral",
+      source: "Yahoo Finance",
+      sourceUrl,
     });
   }
 
@@ -41,6 +48,8 @@ export function makeSignals(q: QuoteData): Signal[] {
     signals.push({
       text: `Analyst consensus: ${label}`,
       type: score <= 2 ? "positive" : score >= 3.5 ? "negative" : "neutral",
+      source: "Yahoo Finance",
+      sourceUrl,
     });
   }
 

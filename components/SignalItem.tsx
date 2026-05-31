@@ -61,7 +61,24 @@ export default function SignalItem({ signal, company }: Props) {
         className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-white/5"
       >
         <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
-        <span className={`flex-1 text-xs ${textColor}`}>{signal.text}</span>
+        <span className="flex-1 text-xs">
+          <span className={textColor}>{signal.text}</span>
+          {signal.source && (
+            signal.sourceUrl ? (
+              <a
+                href={signal.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="ml-1.5 text-gray-600 hover:text-gray-400 transition-colors"
+              >
+                · {signal.source}
+              </a>
+            ) : (
+              <span className="ml-1.5 text-gray-600">· {signal.source}</span>
+            )
+          )}
+        </span>
         <span className="text-xs text-gray-600 group-hover:text-gray-400">
           {expanded ? "▲" : "▼"}
         </span>

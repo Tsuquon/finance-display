@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 const MILESTONES = [
-  { label: "Connecting to market feeds",         ms: 0    },
+  { label: "Connecting to market feeds",          ms: 0    },
   { label: "Fetching top 60 most active equities", ms: 1200 },
-  { label: "Running AI analysis",                ms: 2800 },
-  { label: "Building your dashboard",            ms: null  }, // triggered by data arriving
+  { label: "Running AI analysis",                 ms: 2800 },
+  { label: "Building your dashboard",             ms: null  },
 ];
+
+const AI_STEP = 2; // index of the AI analysis milestone
 
 function Spinner() {
   return (
@@ -18,13 +20,52 @@ function Spinner() {
   );
 }
 
-export default function LoadingScreen({ visible }: { visible: boolean }) {
-  const [mounted, setMounted]   = useState(true);
-  const [fading, setFading]     = useState(false);
-  const [step, setStep]         = useState(0); // index of active milestone (0-based)
-  const [allDone, setAllDone]   = useState(false);
+function TokenCounter({ running, finalCount }: { running: boolean; finalCount: number }) {
+  const [display, setDisplay] = useState(0);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Auto-advance through timed milestones
+  useEffect(() => {
+    if (timer.current) clearInterval(timer.current);
+
+    if (finalCount > 0) {
+      // Animate quickly toward the real value
+      timer.current = setInterval(() => {
+        setDisplay((c) => {
+          if (c >= finalCount) {
+            clearInterval(timer.current!);
+            return finalCount;
+          }
+          return Math.min(c + Math.ceil((finalCount - c) * 0.25 + 1), finalCount);
+        });
+      }, 16);
+    } else if (running) {
+      // Simulate tokens flowing in
+      timer.current = setInterval(() => {
+        setDisplay((c) => c + Math.floor(Math.random() * 110 + 50));
+      }, 40);
+    }
+
+    return () => { if (timer.current) clearInterval(timer.current); };
+  }, [running, finalCount]);
+
+  if (display === 0) return null;
+
+  return (
+    <span
+      className="ml-2 font-mono tabular-nums"
+      style={{ color: "#E0703F", opacity: 0.75, fontSize: "0.65rem" }}
+    >
+      {display.toLocaleString()} tok
+    </span>
+  );
+}
+
+export default function LoadingScreen({ visible, tokens = 0 }: { visible: boolean; tokens?: number }) {
+  const [mounted, setMounted] = useState(true);
+  const [fading, setFading]   = useState(false);
+  const [step, setStep]       = useState(0);
+  const [allDone, setAllDone] = useState(false);
+
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
     MILESTONES.forEach((m, i) => {
@@ -34,9 +75,8 @@ export default function LoadingScreen({ visible }: { visible: boolean }) {
     return () => timers.forEach(clearTimeout);
   }, []);
 
-  // When data arrives: advance to final step, then fade out
   useEffect(() => {
-    if (!visible && !fading) {
+    if (!visible) {
       setStep(MILESTONES.length - 1);
       const done = setTimeout(() => setAllDone(true), 600);
       const fade = setTimeout(() => setFading(true), 800);
@@ -46,6 +86,9 @@ export default function LoadingScreen({ visible }: { visible: boolean }) {
   }, [visible]);
 
   if (!mounted) return null;
+
+  // Arc: C = 2π×190 ≈ 1194. dashoffset 1194→0 grows arc from nothing to full circle.
+  const arcOffset = allDone ? 0 : 1194 - (step / (MILESTONES.length - 1)) * 1194;
 
   return (
     <div
@@ -59,15 +102,7 @@ export default function LoadingScreen({ visible }: { visible: boolean }) {
     >
       {/* Logo */}
       <svg viewBox="-210 -210 420 420" width="160" height="160" fill="none" xmlns="http://www.w3.org/2000/svg">
-        {/* Grey guide ring */}
         <circle cx="0" cy="0" r="190" stroke="rgba(244,239,230,0.1)" strokeWidth="8" />
-        {/*
-          Orange arc traces the ring from 12 o'clock clockwise.
-          C = 2π × 190 ≈ 1194. dash=1194 gap=1194.
-          dashoffset=1194 → arc length 0. dashoffset=0 → full circle.
-          Counting down 1194→0 grows the arc from nothing to a full ring.
-          rotate(-90) anchors the start point at 12 o'clock.
-        */}
         <circle
           cx="0" cy="0" r="190"
           stroke="#E0703F"
@@ -75,17 +110,10 @@ export default function LoadingScreen({ visible }: { visible: boolean }) {
           strokeLinecap="round"
           fill="none"
           strokeDasharray="1194 1194"
-          strokeDashoffset="1194"
+          strokeDashoffset={arcOffset}
           transform="rotate(-90 0 0)"
-        >
-          <animate
-            attributeName="stroke-dashoffset"
-            from="1194"
-            to="0"
-            dur="2s"
-            repeatCount="indefinite"
-          />
-        </circle>
+          style={{ transition: "stroke-dashoffset 0.7s ease" }}
+        />
         <rect x="-95" y="-95" width="190" height="190" rx="64" stroke="#F4EFE6" strokeWidth="13" />
         <circle cx="0" cy="2" r="42" stroke="#E0703F" strokeWidth="13">
           <animate attributeName="stroke-opacity" values="0.35;1;0.35" dur="1.8s" repeatCount="indefinite" />
@@ -104,11 +132,9 @@ export default function LoadingScreen({ visible }: { visible: boolean }) {
         {MILESTONES.map((m, i) => {
           const completed = allDone || i < step;
           const active    = !allDone && i === step;
-          const pending   = !allDone && i > step;
 
           return (
             <div key={i} className="flex items-center gap-3">
-              {/* Icon */}
               <div className="w-4 flex items-center justify-center shrink-0">
                 {completed ? (
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -122,7 +148,6 @@ export default function LoadingScreen({ visible }: { visible: boolean }) {
                 )}
               </div>
 
-              {/* Label */}
               <span
                 className="text-xs transition-all duration-300"
                 style={{
@@ -132,6 +157,13 @@ export default function LoadingScreen({ visible }: { visible: boolean }) {
               >
                 {m.label}
               </span>
+
+              {i === AI_STEP && step >= AI_STEP && (
+                <TokenCounter
+                  running={active}
+                  finalCount={tokens}
+                />
+              )}
             </div>
           );
         })}

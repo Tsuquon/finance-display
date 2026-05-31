@@ -10,7 +10,7 @@ import {
   Tooltip,
   CartesianGrid,
 } from "recharts";
-import type { Company, StockDataPoint, TimeRange } from "@/types";
+import type { Company, Signal, StockDataPoint, TimeRange } from "@/types";
 import { cats } from "@/data/categories";
 import SignalItem from "./SignalItem";
 import TradeWidget from "./TradeWidget";
@@ -31,7 +31,24 @@ export default function StockPanel({ company, onClose }: Props) {
   const [data, setData] = useState<StockDataPoint[]>([]);
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState(false);
+  const [sourcedSignals, setSourcedSignals] = useState<Signal[]>([]);
+  const [signalsLoading, setSignalsLoading] = useState(true);
   const cat = cats[company.category];
+
+  useEffect(() => {
+    setSignalsLoading(true);
+    setSourcedSignals([]);
+    fetch(`/api/signals/sourced/${company.ticker}`)
+      .then((r) => r.json())
+      .then((data: Signal[]) => {
+        setSourcedSignals(data.length > 0 ? data : company.signals);
+        setSignalsLoading(false);
+      })
+      .catch(() => {
+        setSourcedSignals(company.signals);
+        setSignalsLoading(false);
+      });
+  }, [company.ticker, company.signals]);
 
   useEffect(() => {
     setChartLoading(true);
@@ -149,11 +166,18 @@ export default function StockPanel({ company, onClose }: Props) {
         {/* Signals */}
         <div className="rounded-xl border border-gray-700/50 bg-gray-800/40 p-4">
           <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Market Signals</h4>
-          <div className="space-y-1">
-            {company.signals.map((signal, i) => (
-              <SignalItem key={i} signal={signal} company={company} />
-            ))}
-          </div>
+          {signalsLoading ? (
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              <div className="h-3 w-3 animate-spin rounded-full border border-gray-600 border-t-gray-400" />
+              Loading signals…
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {sourcedSignals.map((signal, i) => (
+                <SignalItem key={i} signal={signal} company={company} />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* News */}
