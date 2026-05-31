@@ -19,24 +19,34 @@ interface DataPoint {
 }
 
 function mockHistory(investedAt: number, totalCostBasis: number) {
-  const start = new Date(investedAt);
   const today = new Date();
-  const points = [];
 
-  // Seeded random walk so the curve is stable across refreshes
-  let seed = investedAt % 9999;
+  // Always show at least 90 calendar days so the chart has a full curve
+  const start = new Date(Math.min(investedAt, today.getTime() - 90 * 24 * 60 * 60 * 1000));
+
+  // Seeded random walk — stable across refreshes for the same portfolio
+  let seed = (investedAt >>> 0) % 99991;
   function rand() {
     seed = (seed * 1664525 + 1013904223) & 0x7fffffff;
     return seed / 0x7fffffff;
   }
 
-  let value = totalCostBasis;
+  // Walk the price back to the start so today's endpoint looks realistic
+  const tradingDays = Math.round((today.getTime() - start.getTime()) / (24 * 60 * 60 * 1000) * 5 / 7);
+  let startValue = totalCostBasis;
+  for (let i = 0; i < tradingDays; i++) {
+    startValue /= (1 + (rand() - 0.47) * 0.016);
+  }
+
+  // Reset seed and walk forward
+  seed = (investedAt >>> 0) % 99991;
+  let value = startValue;
+  const points = [];
   const cursor = new Date(start);
 
   while (cursor <= today) {
     const dow = cursor.getDay();
-    if (dow !== 0 && dow !== 6) { // skip weekends
-      // Daily return: slight positive drift (~0.05%) + noise (~0.8%)
+    if (dow !== 0 && dow !== 6) {
       const dailyReturn = (rand() - 0.47) * 0.016;
       value = value * (1 + dailyReturn);
       const pnl    = value - totalCostBasis;
