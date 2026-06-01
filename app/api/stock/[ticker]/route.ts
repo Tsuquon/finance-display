@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import YFDefault from "yahoo-finance2";
 import type { TimeRange, CategoryKey, StockDataPoint } from "@/types";
+import { DEMO_MODE } from "@/lib/ibkr";
 
 type Quote = { date: Date | string; close: number | null; volume: number | null };
 type ChartResult = { quotes: Quote[] };
@@ -10,8 +11,8 @@ const yf = new (YFDefault as any)({ suppressNotices: ["ripHistorical"] }) as {
   chart(symbol: string, opts: Record<string, unknown>): Promise<ChartResult>;
 };
 
-const RANGE_CONFIG: Record<Exclude<TimeRange, "1D">, { days: number; interval: string }> = {
-  "1W": { days: 7,   interval: "1h"  },
+const RANGE_CONFIG: Record<Exclude<TimeRange, "1H" | "1D">, { days: number; interval: string }> = {
+  "1W": { days: 7,   interval: "30m" },
   "1M": { days: 30,  interval: "1d"  },
   "3M": { days: 90,  interval: "1d"  },
   "1Y": { days: 365, interval: "1wk" },
@@ -26,7 +27,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 function formatDate(raw: Date | string, range: TimeRange): string {
   const d = new Date(raw);
-  if (range === "1D") {
+  if (range === "1H" || range === "1D") {
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
   if (range === "1W") {
@@ -44,14 +45,17 @@ export async function GET(
   const range = (req.nextUrl.searchParams.get("range") ?? "1M") as TimeRange;
   const category = (req.nextUrl.searchParams.get("category") ?? "stable") as CategoryKey;
 
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && !DEMO_MODE) {
     const { generateMockData } = await import("@/lib/mockData");
     return NextResponse.json({ data: generateMockData(ticker, range, category) });
   }
 
   try {
     let opts: Record<string, unknown>;
-    if (range === "1D") {
+    if (range === "1H") {
+      // 1-min bars for the current trading day; we'll slice to the last 60
+      opts = { range: "1d", interval: "1m" };
+    } else if (range === "1D") {
       // Use Yahoo's built-in range — always returns the most recent trading day,
       // even on weekends when period1=yesterday would return empty.
       opts = { range: "1d", interval: "5m" };
@@ -64,13 +68,15 @@ export async function GET(
 
     const result = await withTimeout(yf.chart(ticker, opts), 12_000);
 
-    const data: StockDataPoint[] = (result.quotes ?? [])
-      .filter((q) => q.close !== null)
-      .map((q) => ({
-        date: formatDate(q.date, range),
-        price: Math.round((q.close ?? 0) * 100) / 100,
-        volume: q.volume ?? 0,
-      }));
+    let quotes = (result.quotes ?? []).filter((q) => q.close !== null);
+    // For 1H: keep only the last 60 minutes of data
+    if (range === "1H") quotes = quotes.slice(-60);
+
+    const data: StockDataPoint[] = quotes.map((q) => ({
+      date: formatDate(q.date, range),
+      price: Math.round((q.close ?? 0) * 100) / 100,
+      volume: q.volume ?? 0,
+    }));
 
     return NextResponse.json({ data });
   } catch {

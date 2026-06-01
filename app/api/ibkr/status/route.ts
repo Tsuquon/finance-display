@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthStatus, tickle, reauthenticate, PAPER_MODE, MOCK_MODE } from "@/lib/ibkr";
+import { getAuthStatus, tickle, reauthenticate, PAPER_MODE, MOCK_MODE, DEMO_MODE } from "@/lib/ibkr";
 
 export async function GET() {
   if (MOCK_MODE) {
@@ -7,11 +7,12 @@ export async function GET() {
       connected: true,
       authenticated: true,
       competing: false,
-      message: "mock",
+      message: DEMO_MODE ? "demo" : "mock",
       paper: true,
       gatewayReachable: true,
       needsLogin: false,
       mock: true,
+      demo: DEMO_MODE,
     });
   }
 

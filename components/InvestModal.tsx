@@ -41,6 +41,11 @@ function fmt(n: number) {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
 }
 
+function fmtShares(n: number) {
+  if (Number.isInteger(n)) return String(n);
+  return n.toFixed(4).replace(/\.?0+$/, "");
+}
+
 export default function InvestModal({ allocations, onClose, onInvested }: Props) {
   const [step, setStep]           = useState<Step>("previewing");
   const [preview, setPreview]     = useState<{ accountId: string; orders: PreviewOrder[]; totalEstimated: number; skipped: number } | null>(null);
@@ -49,6 +54,9 @@ export default function InvestModal({ allocations, onClose, onInvested }: Props)
   const [errorMsg, setErrorMsg]   = useState("");
   const [executing, setExecuting] = useState<string[]>([]); // tickers in progress
   const [paper, setPaper]         = useState(false);
+  const [investmentDate, setInvestmentDate] = useState<string>(
+    new Date().toISOString().slice(0, 10) // default to today, YYYY-MM-DD
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -89,7 +97,13 @@ export default function InvestModal({ allocations, onClose, onInvested }: Props)
       const data = await res.json();
       if (data.error) { setStep("error"); setErrorMsg(data.error); return; }
       setResults(data.results ?? []);
-      setInvestRecord(data.investmentRecord);
+      // Use the user-selected date (parsed as local midnight to avoid UTC offset issues)
+      const [y, m, d] = investmentDate.split('-').map(Number);
+      const record: InvestmentRecord = {
+        ...data.investmentRecord,
+        investedAt: new Date(y, m - 1, d).getTime(),
+      };
+      setInvestRecord(record);
       setStep("done");
     } catch {
       setStep("error");
@@ -149,7 +163,7 @@ export default function InvestModal({ allocations, onClose, onInvested }: Props)
                       <p className="text-xs text-red-400 mt-0.5">{o.error}</p>
                     ) : (
                       <p className="text-xs text-gray-500 mt-0.5">
-                        {o.shares} shares @ {fmt(o.price ?? 0)}
+                        {fmtShares(o.shares ?? 0)} shares @ {fmt(o.price ?? 0)}
                       </p>
                     )}
                   </div>
@@ -188,7 +202,7 @@ export default function InvestModal({ allocations, onClose, onInvested }: Props)
                         )}
                       </div>
                       <span className="text-sm font-mono text-white">{o.ticker}</span>
-                      <span className="text-xs text-gray-500 flex-1">{o.shares} shares</span>
+                      <span className="text-xs text-gray-500 flex-1">{fmtShares(o.shares ?? 0)} shares</span>
                       {result && (
                         <span className={`text-xs ${result.error ? "text-red-400" : "text-gray-500"}`}>
                           {result.error ?? `#${result.orderId ?? "placed"}`}
@@ -226,7 +240,7 @@ export default function InvestModal({ allocations, onClose, onInvested }: Props)
                     <span className="text-sm font-mono text-white flex-1">{r.ticker}</span>
                     {!r.error && (
                       <span className="text-xs text-gray-500">
-                        {r.shares} shares · {fmt(r.shares * r.price)}
+                        {fmtShares(r.shares)} shares · {fmt(r.shares * r.price)}
                       </span>
                     )}
                     {r.error && <span className="text-xs text-red-400">{r.error}</span>}
@@ -268,19 +282,34 @@ export default function InvestModal({ allocations, onClose, onInvested }: Props)
               >
                 Cancel
               </button>
-              <div className="flex-1 text-right">
-                <p className="text-xs text-gray-600 mb-1">
-                  Estimated total: <span className="text-white font-mono font-semibold">{fmt(preview.totalEstimated)}</span>
-                  {preview.skipped > 0 && (
-                    <span className="ml-2 text-yellow-500">{preview.skipped} skipped</span>
-                  )}
-                </p>
-                <button
-                  onClick={handleConfirm}
-                  className="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
-                >
-                  Confirm &amp; Place Orders
-                </button>
+              <div className="flex-1 text-right space-y-2">
+                <div className="flex items-center justify-end gap-2">
+                  <label htmlFor="invest-date" className="text-xs text-gray-500 shrink-0">
+                    Investment date
+                  </label>
+                  <input
+                    id="invest-date"
+                    type="date"
+                    value={investmentDate}
+                    max={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => setInvestmentDate(e.target.value)}
+                    className="rounded-lg border border-gray-700 bg-gray-900 px-2 py-1 text-xs font-mono text-white focus:border-indigo-500 focus:outline-none [color-scheme:dark]"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-gray-600 mb-1">
+                    Estimated total: <span className="text-white font-mono font-semibold">{fmt(preview.totalEstimated)}</span>
+                    {preview.skipped > 0 && (
+                      <span className="ml-2 text-yellow-500">{preview.skipped} skipped</span>
+                    )}
+                  </p>
+                  <button
+                    onClick={handleConfirm}
+                    className="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
+                  >
+                    Confirm &amp; Place Orders
+                  </button>
+                </div>
               </div>
             </>
           ) : step === "error" ? (

@@ -75,7 +75,7 @@ export default function AIChat({ companies, onClose }: Props) {
       <div className="flex items-center justify-between border-b border-gray-700/50 px-4 py-3">
         <div>
           <h3 className="text-sm font-bold text-white">Portfolio AI</h3>
-          <p className="text-xs text-gray-500">Ask about any company</p>
+          <p className="text-xs text-gray-500">Scores · technicals · quant factors</p>
         </div>
         <button
           onClick={onClose}
@@ -91,9 +91,9 @@ export default function AIChat({ companies, onClose }: Props) {
           <div className="space-y-2">
             <p className="text-xs text-gray-600 mb-4">Try asking:</p>
             {[
-              "Compare NVDA and INTC in AI chips",
-              "Which fading stocks have near-term catalysts?",
-              "What are the macro risks in this portfolio?",
+              "Which stocks have the strongest short-term scores?",
+              "Compare technical setups across the portfolio",
+              "Which stocks rank best on quant factors?",
             ].map((q) => (
               <button
                 key={q}

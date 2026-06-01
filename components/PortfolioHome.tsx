@@ -11,11 +11,17 @@ import {
   type InvestedPosition,
 } from "@/lib/portfolios";
 import PortfolioPnLChart from "./PortfolioPnLChart";
+import TradingEngine from "./TradingEngine";
 
-const MODE_STYLES = {
+const MODE_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   aggressive:   { bg: "bg-red-900/30",    text: "text-red-400",    label: "Aggressive"    },
   balanced:     { bg: "bg-indigo-900/30", text: "text-indigo-400", label: "Balanced"      },
   conservative: { bg: "bg-amber-900/30",  text: "text-amber-400",  label: "Conservative"  },
+  momentum:     { bg: "bg-orange-900/30", text: "text-orange-400", label: "Momentum"      },
+  value:        { bg: "bg-teal-900/30",   text: "text-teal-400",   label: "Value"         },
+  growth:       { bg: "bg-violet-900/30", text: "text-violet-400", label: "Growth"        },
+  income:       { bg: "bg-green-900/30",  text: "text-green-400",  label: "Income"        },
+  custom:       { bg: "bg-gray-800/60",   text: "text-gray-300",   label: "Custom"        },
 };
 
 interface PnLResult {
@@ -51,6 +57,7 @@ export default function PortfolioHome() {
   const [ibkrConnected, setIbkrConnected]   = useState<boolean | null>(null);
   const [ibkrPaper, setIbkrPaper]           = useState(false);
   const [ibkrMock, setIbkrMock]             = useState(false);
+  const [ibkrDemo, setIbkrDemo]             = useState(false);
   const [ibkrNeedsLogin, setIbkrNeedsLogin] = useState(false);
   const [ibkrGateway, setIbkrGateway]       = useState(false);
   const [pnlMap, setPnlMap]           = useState<Record<string, PnLResult>>({});
@@ -72,6 +79,7 @@ export default function PortfolioHome() {
         setIbkrConnected(!!data.connected);
         setIbkrPaper(!!data.paper);
         setIbkrMock(!!data.mock);
+        setIbkrDemo(!!data.demo);
         setIbkrNeedsLogin(!!data.needsLogin);
         setIbkrGateway(!!data.gatewayReachable);
         // Poll every 4s while waiting for login, 30s once connected
@@ -176,7 +184,7 @@ export default function PortfolioHome() {
         ) : ibkrConnected ? (
           <div className="flex items-center gap-1.5 text-xs text-gray-400">
             <div className="h-2 w-2 rounded-full bg-emerald-400" />
-            {ibkrMock ? "IBKR Mock" : ibkrPaper ? "IBKR Paper" : "IBKR Live"}
+            {ibkrDemo ? "Demo Mode" : ibkrMock ? "IBKR Mock" : ibkrPaper ? "IBKR Paper" : "IBKR Live"}
           </div>
         ) : ibkrNeedsLogin ? (
           <a
@@ -200,6 +208,12 @@ export default function PortfolioHome() {
           className="text-xs text-gray-500 hover:text-white transition-colors flex items-center gap-1"
         >
           Market Data →
+        </Link>
+        <Link
+          href="/metrics"
+          className="text-xs text-gray-500 hover:text-white transition-colors flex items-center gap-1"
+        >
+          Methodology →
         </Link>
       </header>
 
@@ -318,15 +332,15 @@ export default function PortfolioHome() {
                           </span>
                         </div>
                         {pnl ? (
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs text-gray-500">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="text-xs text-gray-500 shrink-0">
                               Current value
                             </span>
-                            <div className="text-right">
+                            <div className="flex flex-col items-end min-w-0">
                               <span className="text-xs font-mono text-white">
                                 {fmt(pnl.totalCurrentValue)}
                               </span>
-                              <span className={`ml-2 text-xs font-semibold font-mono ${pnl.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                              <span className={`text-xs font-semibold font-mono ${pnl.pnl >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                                 {pnl.pnl >= 0 ? "+" : ""}{fmt(pnl.pnl)} ({pnl.pnlPct >= 0 ? "+" : ""}{pnl.pnlPct.toFixed(2)}%)
                               </span>
                             </div>
@@ -369,6 +383,11 @@ export default function PortfolioHome() {
               </button>
             </div>
           )}
+
+          {/* AI Trading Engine */}
+          <div className="border-t border-gray-800 pt-8">
+            <TradingEngine />
+          </div>
         </div>
       </main>
 
@@ -378,7 +397,25 @@ export default function PortfolioHome() {
           positions={chartPortfolio.investment.positions}
           investedAt={chartPortfolio.investment.investedAt}
           totalInvested={chartPortfolio.investment.totalInvested}
+          isMock={ibkrMock}
+          snapshot={chartPortfolio.snapshot}
+          portfolioSize={chartPortfolio.portfolioSize}
           onClose={() => setChartPortfolio(null)}
+          onInvestedAtChange={(ms) => {
+            const id = chartPortfolio.id;
+            setPortfolios((prev) => {
+              const updated = prev.map((p) =>
+                p.id === id && p.investment
+                  ? { ...p, investment: { ...p.investment, investedAt: ms } }
+                  : p
+              );
+              persistPortfolios(updated);
+              return updated;
+            });
+          }}
+          onPnlChange={(result) => {
+            setPnlMap((prev) => ({ ...prev, [chartPortfolio.id]: result }));
+          }}
         />
       )}
 

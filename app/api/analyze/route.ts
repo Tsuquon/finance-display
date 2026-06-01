@@ -1,14 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
 import type { Company } from "@/types";
+import { sql } from "@/lib/db";
 
 const client = new Anthropic();
 
 const SYSTEM_PROMPT = `You are a concise equity research analyst. Given a company's investment thesis and market signals, provide a focused 3-4 sentence analysis covering: current momentum, key risk/opportunity to watch, and a one-line positioning recommendation. Be direct and avoid filler. No disclaimers.`;
 
-type CacheEntry = { text: string; at: number };
-const cache = new Map<string, CacheEntry>();
-const TTL = 60 * 60 * 1000; // 1 hour
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const HEADERS = { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" };
 
@@ -19,9 +18,15 @@ export async function POST(req: NextRequest) {
 
   const { company }: { company: Company } = await req.json();
 
-  const hit = cache.get(company.ticker);
-  if (hit && Date.now() - hit.at < TTL) {
-    return new Response(hit.text, { headers: HEADERS });
+  // Return cached analysis if it's less than 1 day old
+  const rows = await sql`
+    SELECT analysis, refreshed_at FROM stock_analysis WHERE ticker = ${company.ticker}
+  `;
+  if (rows.length > 0) {
+    const age = Date.now() - new Date(rows[0].refreshed_at as string).getTime();
+    if (age < DAY_MS) {
+      return new Response(rows[0].analysis as string, { headers: HEADERS });
+    }
   }
 
   let accumulated = "";
@@ -33,7 +38,6 @@ export async function POST(req: NextRequest) {
         max_tokens: 350,
         thinking: { type: "adaptive" },
         output_config: { effort: "medium" },
-        // system prompt is ~80 tokens — below Sonnet's 2048-token cache minimum, so no cache_control
         system: SYSTEM_PROMPT,
         messages: [
           {
@@ -50,7 +54,13 @@ export async function POST(req: NextRequest) {
 
       try {
         await stream.finalMessage();
-        cache.set(company.ticker, { text: accumulated, at: Date.now() });
+        // Upsert into DB — refresh timestamp
+        await sql`
+          INSERT INTO stock_analysis (ticker, analysis, refreshed_at)
+          VALUES (${company.ticker}, ${accumulated}, now())
+          ON CONFLICT (ticker) DO UPDATE
+            SET analysis = EXCLUDED.analysis, refreshed_at = now()
+        `;
       } catch (err) {
         controller.error(err);
         return;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -18,8 +18,10 @@ import AIAnalysis from "./AIAnalysis";
 import NewsSection from "./NewsSection";
 import InvestScore from "./InvestScore";
 import TrendAnalysis from "./TrendAnalysis";
+import CompositeScore from "./CompositeScore";
+import QuantScore from "./QuantScore";
 
-const TIME_RANGES: TimeRange[] = ["1D", "1W", "1M", "3M", "1Y"];
+const TIME_RANGES: TimeRange[] = ["1H", "1D", "1W", "1M", "3M", "1Y"];
 
 interface Props {
   company: Company;
@@ -33,6 +35,9 @@ export default function StockPanel({ company, onClose }: Props) {
   const [chartError, setChartError] = useState(false);
   const [sourcedSignals, setSourcedSignals] = useState<Signal[]>([]);
   const [signalsLoading, setSignalsLoading] = useState(true);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const rangeRef = useRef(range);
+  rangeRef.current = range;
   const cat = cats[company.category];
 
   useEffect(() => {
@@ -50,18 +55,28 @@ export default function StockPanel({ company, onClose }: Props) {
       });
   }, [company.ticker, company.signals]);
 
-  useEffect(() => {
+  const fetchChart = useCallback((r: TimeRange) => {
     setChartLoading(true);
     setChartError(false);
-    fetch(`/api/stock/${company.ticker}?range=${range}&category=${company.category}`)
-      .then((r) => r.json())
+    fetch(`/api/stock/${company.ticker}?range=${r}&category=${company.category}`)
+      .then((res) => res.json())
       .then(({ data: d, error }) => {
         if (error || !d?.length) { setChartError(true); setData([]); }
-        else setData(d);
+        else { setData(d); setLastRefreshed(new Date()); }
         setChartLoading(false);
       })
       .catch(() => { setChartError(true); setChartLoading(false); });
-  }, [company.ticker, company.category, range]);
+  }, [company.ticker, company.category]);
+
+  // Fetch on range or ticker change
+  useEffect(() => { fetchChart(range); }, [company.ticker, range, fetchChart]);
+
+  // Auto-refresh every 60s (shorter for 1H view)
+  useEffect(() => {
+    const interval = rangeRef.current === "1H" ? 30_000 : 60_000;
+    const id = setInterval(() => fetchChart(rangeRef.current), interval);
+    return () => clearInterval(id);
+  }, [company.ticker, fetchChart]);
 
   const currentPrice = data[data.length - 1]?.price ?? 0;
   const startPrice = data[0]?.price ?? 0;
@@ -89,6 +104,16 @@ export default function StockPanel({ company, onClose }: Props) {
             <div className={`text-sm font-semibold ${isPositive ? "text-emerald-400" : "text-red-400"}`}>
               {isPositive ? "+" : ""}${change.toFixed(2)} ({isPositive ? "+" : ""}{changePct.toFixed(2)}%)
             </div>
+            {company.dividendYield != null && company.dividendYield > 0 ? (
+              <div className="mt-0.5 text-xs text-green-400 font-mono">
+                Div {(company.dividendYield * 100).toFixed(2)}%
+                {company.dividendRate != null && (
+                  <span className="text-gray-500 ml-1">(${company.dividendRate.toFixed(2)}/yr)</span>
+                )}
+              </div>
+            ) : (
+              <div className="mt-0.5 text-xs text-gray-600">No dividend</div>
+            )}
           </div>
         </div>
         <button
@@ -102,18 +127,28 @@ export default function StockPanel({ company, onClose }: Props) {
       <div className="flex-1 space-y-4 p-5">
         {/* Chart */}
         <div>
-          <div className="mb-2 flex gap-1">
-            {TIME_RANGES.map((r) => (
-              <button
-                key={r}
-                onClick={() => setRange(r)}
-                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
-                  range === r ? `${cat.bg} ${cat.text} border ${cat.border}` : "text-gray-500 hover:text-gray-300"
-                }`}
-              >
-                {r}
-              </button>
-            ))}
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex gap-1">
+              {TIME_RANGES.map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setRange(r)}
+                  className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
+                    range === r ? `${cat.bg} ${cat.text} border ${cat.border}` : "text-gray-500 hover:text-gray-300"
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            {lastRefreshed && !chartLoading && (
+              <span className="text-[10px] text-gray-700">
+                updated {lastRefreshed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+              </span>
+            )}
+            {chartLoading && (
+              <div className="h-3 w-3 animate-spin rounded-full border border-gray-600 border-t-gray-400" />
+            )}
           </div>
 
           <div className="h-48">
@@ -135,7 +170,13 @@ export default function StockPanel({ company, onClose }: Props) {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#6b7280" }} tickLine={false} interval="preserveStartEnd" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 9, fill: "#6b7280" }}
+                    tickLine={false}
+                    interval={range === "1H" ? 9 : range === "1W" ? 12 : "preserveStartEnd"}
+                    tickFormatter={range === "1W" ? (v: string) => v.split(" ")[0] : undefined}
+                  />
                   <YAxis tick={{ fontSize: 9, fill: "#6b7280" }} tickLine={false} axisLine={false} domain={["auto", "auto"]} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
                   <Tooltip
                     contentStyle={{ background: "#111827", border: `1px solid ${cat.color}33`, borderRadius: 8, fontSize: 11 }}
@@ -153,6 +194,12 @@ export default function StockPanel({ company, onClose }: Props) {
           <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Investment Thesis</h4>
           <p className="text-sm text-gray-300 leading-relaxed">{company.reason}</p>
         </div>
+
+        {/* Composite Score */}
+        <CompositeScore company={company} />
+
+        {/* Quant Score */}
+        <QuantScore company={company} />
 
         {/* Trend Analysis */}
         <TrendAnalysis ticker={company.ticker} />

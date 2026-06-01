@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   AreaChart,
   Area,
@@ -10,7 +10,7 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from "recharts";
-import type { InvestedPosition } from "@/lib/portfolios";
+import type { InvestedPosition, SnapshotRow } from "@/lib/portfolios";
 
 interface DataPoint {
   date: string;
@@ -23,41 +23,110 @@ interface Props {
   positions: InvestedPosition[];
   investedAt: number;
   totalInvested: number;
+  isMock?: boolean;
+  snapshot?: SnapshotRow[];
+  portfolioSize?: string;
   onClose: () => void;
+  onInvestedAtChange?: (ms: number) => void;
+  onPnlChange?: (result: { pnl: number; pnlPct: number; totalCurrentValue: number; totalCostBasis: number }) => void;
 }
 
 function fmt(n: number) {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 }
 
-export default function PortfolioPnLChart({ positions, investedAt, totalInvested, onClose }: Props) {
-  const [points, setPoints]   = useState<DataPoint[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState("");
+function toDateInput(ms: number) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+export default function PortfolioPnLChart({
+  positions,
+  investedAt,
+  totalInvested,
+  isMock,
+  snapshot,
+  portfolioSize,
+  onClose,
+  onInvestedAtChange,
+  onPnlChange,
+}: Props) {
+  const backtestMode = isMock && !!snapshot?.length;
+
+  const [points, setPoints]     = useState<DataPoint[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState("");
+  const [costBasis, setCostBasis] = useState(totalInvested);
+
+  const [startDate, setStartDate]       = useState(investedAt);
+  const [btSize, setBtSize]             = useState(backtestMode ? String(Math.round(totalInvested)) : (portfolioSize ?? "2000"));
+  const [pendingSize, setPendingSize]   = useState(backtestMode ? String(Math.round(totalInvested)) : (portfolioSize ?? "2000"));
+  const sizeInputRef = useRef<HTMLInputElement>(null);
+
+  function parsedSize() {
+    const n = parseFloat(String(pendingSize).replace(/[^0-9.]/g, ""));
+    return isNaN(n) || n <= 0 ? 2000 : n;
+  }
 
   useEffect(() => {
-    fetch("/api/ibkr/history", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ positions, investedAt }),
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.error) { setError(data.error); return; }
-        setPoints(data.points ?? []);
+    setLoading(true);
+    setError("");
+
+    if (backtestMode) {
+      const size = parseFloat(String(btSize).replace(/[^0-9.]/g, "")) || 2000;
+      fetch("/api/backtest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          allocations: snapshot!.map((r) => ({ ticker: r.ticker, allocation: r.allocation })),
+          portfolioSize: size,
+          startDate,
+        }),
       })
-      .catch(() => setError("Failed to load history"))
-      .finally(() => setLoading(false));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.error) { setError(data.error); return; }
+          const pts: DataPoint[] = data.points ?? [];
+          setPoints(pts);
+          const basis = data.costBasis ?? size;
+          setCostBasis(basis);
+          const last = pts[pts.length - 1];
+          if (last) onPnlChange?.({ pnl: last.pnl, pnlPct: last.pnlPct, totalCurrentValue: last.value, totalCostBasis: basis });
+        })
+        .catch(() => setError("Failed to load backtest data"))
+        .finally(() => setLoading(false));
+    } else {
+      fetch("/api/ibkr/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ positions, investedAt: startDate }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.error) { setError(data.error); return; }
+          const pts: DataPoint[] = data.points ?? [];
+          setPoints(pts);
+          const basis = data.totalCostBasis ?? totalInvested;
+          setCostBasis(basis);
+          const last = pts[pts.length - 1];
+          if (last) onPnlChange?.({ pnl: last.pnl, pnlPct: last.pnlPct, totalCurrentValue: last.value, totalCostBasis: basis });
+        })
+        .catch(() => setError("Failed to load history"))
+        .finally(() => setLoading(false));
+    }
+  }, [startDate, btSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const latest = points[points.length - 1];
+  const latest   = points[points.length - 1];
   const positive = (latest?.pnl ?? 0) >= 0;
-  const color = positive ? "#34d399" : "#f87171"; // emerald / red
+  const color    = positive ? "#34d399" : "#f87171";
 
-  // Format x-axis labels: show month/day
   function fmtDate(d: string) {
     const date = new Date(d + "T00:00:00");
     return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  }
+
+  function commitSize() {
+    const n = parsedSize();
+    setBtSize(String(n));
   }
 
   return (
@@ -67,15 +136,68 @@ export default function PortfolioPnLChart({ positions, investedAt, totalInvested
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
-          <div>
-            <h2 className="text-sm font-bold text-white">Portfolio Performance</h2>
-            <p className="text-xs text-gray-500 mt-0.5">
-              Since {new Date(investedAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
-              {" · "}Cost basis {fmt(totalInvested)}
-            </p>
+        <div className="flex items-start justify-between border-b border-gray-800 px-6 py-4 gap-4">
+          <div className="space-y-2 min-w-0">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-bold text-white">
+                {backtestMode ? "Backtest" : "Portfolio Performance"}
+              </h2>
+              {backtestMode && (
+                <span className="rounded bg-yellow-900/40 px-1.5 py-0.5 text-[10px] font-mono font-semibold text-yellow-400 border border-yellow-700/30 shrink-0">
+                  DEV · BACKTEST
+                </span>
+              )}
+            </div>
+
+            {backtestMode ? (
+              <div className="flex items-center gap-3 flex-wrap">
+                {/* Start date picker */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-gray-500">From</span>
+                  <input
+                    type="date"
+                    value={toDateInput(startDate)}
+                    max={toDateInput(Date.now() - 24 * 60 * 60 * 1000)}
+                    onChange={(e) => {
+                      const ms = new Date(e.target.value + "T00:00:00").getTime();
+                      if (!isNaN(ms)) {
+                        setStartDate(ms);
+                        onInvestedAtChange?.(ms);
+                      }
+                    }}
+                    className="rounded border border-gray-700 bg-gray-800 px-1.5 py-0.5 text-xs text-white focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+
+                {/* Portfolio size input */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-gray-500">Invest</span>
+                  <div className="relative">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-500 pointer-events-none">$</span>
+                    <input
+                      ref={sizeInputRef}
+                      type="text"
+                      value={pendingSize}
+                      onChange={(e) => setPendingSize(e.target.value.replace(/[^0-9.]/g, ""))}
+                      onBlur={commitSize}
+                      onKeyDown={(e) => { if (e.key === "Enter") { commitSize(); sizeInputRef.current?.blur(); } }}
+                      className="w-24 rounded border border-gray-700 bg-gray-800 pl-5 pr-2 py-0.5 text-xs text-white font-mono focus:border-indigo-500 focus:outline-none text-right"
+                    />
+                  </div>
+                </div>
+
+                <span className="text-xs text-gray-600">
+                  · Cost basis {fmt(costBasis)}
+                </span>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500">
+                Since {new Date(startDate).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+                {" · "}Cost basis {fmt(costBasis)}
+              </p>
+            )}
           </div>
-          <button onClick={onClose} className="text-gray-600 hover:text-white transition-colors">✕</button>
+          <button onClick={onClose} className="text-gray-600 hover:text-white transition-colors shrink-0 mt-0.5">✕</button>
         </div>
 
         {/* Stats */}
@@ -107,13 +229,16 @@ export default function PortfolioPnLChart({ positions, investedAt, totalInvested
           {loading ? (
             <div className="flex items-center justify-center h-48 gap-2 text-xs text-gray-600">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-700 border-t-gray-400" />
-              Loading price history…
+              {backtestMode ? "Running backtest…" : "Loading price history…"}
             </div>
           ) : error ? (
             <div className="flex items-center justify-center h-48 text-xs text-red-400">{error}</div>
           ) : points.length === 0 ? (
-            <div className="flex items-center justify-center h-48 text-xs text-gray-600">
-              No price history available yet
+            <div className="flex flex-col items-center justify-center h-48 gap-2 text-center">
+              <p className="text-xs text-gray-600">No price history for this date range.</p>
+              {backtestMode && (
+                <p className="text-xs text-gray-700">Try an earlier start date.</p>
+              )}
             </div>
           ) : (
             <div className="h-56">
@@ -121,7 +246,7 @@ export default function PortfolioPnLChart({ positions, investedAt, totalInvested
                 <AreaChart data={points} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={color} stopOpacity={0.25} />
+                      <stop offset="5%"  stopColor={color} stopOpacity={0.25} />
                       <stop offset="95%" stopColor={color} stopOpacity={0} />
                     </linearGradient>
                   </defs>

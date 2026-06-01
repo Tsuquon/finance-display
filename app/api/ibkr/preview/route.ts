@@ -25,7 +25,7 @@ export async function POST(req: Request) {
             const quote = await yf.quote(ticker);
             const price = quote?.regularMarketPrice ?? 0;
             if (!price) return { ticker, name, dollar, error: "Price unavailable" };
-            const shares = Math.floor(dollar / price);
+            const shares = parseFloat((dollar / price).toFixed(4));
             return {
               ticker,
               name,
@@ -34,7 +34,7 @@ export async function POST(req: Request) {
               price: parseFloat(price.toFixed(2)),
               shares,
               estimatedCost: parseFloat((shares * price).toFixed(2)),
-              error: shares === 0 ? "Insufficient allocation (< 1 share)" : undefined,
+              error: shares < 0.0001 ? "Insufficient allocation" : undefined,
             };
           } catch {
             return { ticker, name, dollar, error: "Price fetch failed" };

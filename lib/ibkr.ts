@@ -4,6 +4,8 @@ import http from "node:http";
 const GATEWAY = (process.env.IBKR_GATEWAY_URL ?? "https://localhost:5001").replace(/\/$/, "");
 export const PAPER_MODE = process.env.IBKR_PAPER === "true";
 export const MOCK_MODE  = process.env.IBKR_MOCK  === "true";
+// Demo mode: real Yahoo Finance + real AI, but IBKR is still simulated (requires IBKR_MOCK=true)
+export const DEMO_MODE  = process.env.DEMO_MODE   === "true";
 
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json };
 

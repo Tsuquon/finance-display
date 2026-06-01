@@ -15,9 +15,9 @@ function timeAgo(iso: string) {
 }
 
 const EFFECT_STYLE = {
-  positive: { dot: "bg-emerald-400", text: "text-emerald-400", badge: "bg-emerald-900/40 text-emerald-400" },
-  negative: { dot: "bg-red-400",     text: "text-red-400",     badge: "bg-red-900/40 text-red-400"         },
-  neutral:  { dot: "bg-gray-500",    text: "text-gray-400",    badge: "bg-gray-800 text-gray-400"           },
+  positive: { dot: "bg-emerald-400", text: "text-emerald-400", badge: "bg-emerald-900/40 text-emerald-400 border-emerald-500/20" },
+  negative: { dot: "bg-red-400",     text: "text-red-400",     badge: "bg-red-900/40 text-red-400 border-red-500/20"           },
+  neutral:  { dot: "bg-gray-600",    text: "text-gray-400",    badge: "bg-gray-800/60 text-gray-500 border-gray-700/40"        },
 };
 
 type HoveredItem = FeaturedNewsItem & { x: number };
@@ -75,9 +75,12 @@ export default function NewsTicker({ companies }: { companies: Company[] }) {
   }
 
   if (items.length === 0) return (
-    <div className="flex shrink-0 items-center border-t border-gray-800 bg-gray-900/80 px-6 py-1.5">
-      <span className="shrink-0 rounded bg-indigo-600 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-white mr-4">News</span>
-      <span className="text-xs text-gray-600">Loading headlines…</span>
+    <div className="flex shrink-0 items-center border-t border-gray-800/80 bg-gray-950/90 px-5 py-1.5 gap-4">
+      <div className="flex items-center gap-1.5 shrink-0">
+        <span className="w-1.5 h-1.5 rounded-full bg-gray-700" />
+        <span className="text-[10px] font-mono font-bold uppercase tracking-[0.15em] text-gray-600">Live</span>
+      </div>
+      <span className="text-[11px] font-mono text-gray-700">Loading headlines…</span>
     </div>
   );
 
@@ -87,12 +90,17 @@ export default function NewsTicker({ companies }: { companies: Company[] }) {
   return (
     <>
       <div
-        className="flex shrink-0 items-center border-t border-gray-800 bg-gray-900/80 overflow-hidden"
+        className="flex shrink-0 items-center border-t border-gray-800/80 bg-gray-950/90 overflow-hidden"
         onMouseLeave={handleMouseLeave}
       >
-        <div className="shrink-0 z-10 flex items-center bg-gray-900 pl-6 pr-4 py-1.5 border-r border-gray-800/60">
-          <span className="rounded bg-indigo-600 px-2 py-0.5 text-xs font-bold uppercase tracking-wider text-white">
-            News
+        {/* Live badge */}
+        <div className="shrink-0 z-10 flex items-center bg-gray-950/95 pl-5 pr-4 py-1.5 border-r border-gray-800/60 gap-1.5">
+          <span
+            className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"
+            style={{ animation: "pulse-dot 2s ease-in-out infinite" }}
+          />
+          <span className="text-[10px] font-mono font-bold uppercase tracking-[0.15em] text-gray-500">
+            Live
           </span>
         </div>
 
@@ -110,14 +118,14 @@ export default function NewsTicker({ companies }: { companies: Company[] }) {
                 href={item.link}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-6 text-xs text-gray-400 hover:text-white transition-colors whitespace-nowrap group cursor-pointer"
+                className="flex items-center gap-1.5 px-5 text-[11px] text-gray-500 hover:text-gray-200 transition-colors whitespace-nowrap group cursor-pointer"
                 onMouseEnter={(e) => handleMouseEnter(item, e)}
               >
-                <span className="text-gray-600 group-hover:text-indigo-400 transition-colors">{item.publisher}</span>
-                <span className="text-gray-700">·</span>
-                <span>{item.title}</span>
-                <span className="text-gray-700 text-xs ml-1">({timeAgo(item.publishedAt)})</span>
-                <span className="mx-4 text-gray-700">|</span>
+                <span className="font-mono text-[10px] text-gray-700 group-hover:text-indigo-500 transition-colors">{item.publisher}</span>
+                <span className="text-gray-800">·</span>
+                <span className="text-gray-400 group-hover:text-gray-200 transition-colors">{item.title}</span>
+                <span className="font-mono text-[10px] text-gray-700 ml-0.5">({timeAgo(item.publishedAt)})</span>
+                <span className="mx-5 text-gray-800">|</span>
               </a>
             ))}
           </div>
@@ -127,49 +135,51 @@ export default function NewsTicker({ companies }: { companies: Company[] }) {
       {/* Hover popover */}
       {hovered && (
         <div
-          className="fixed bottom-[40px] z-50 w-[400px] rounded-xl border border-gray-700 bg-gray-900 shadow-2xl"
+          className="fixed bottom-[38px] z-50 w-[400px] rounded-xl border border-gray-700/80 bg-gray-900/98 shadow-2xl overflow-hidden"
           style={{ left: hovered.x }}
           onMouseEnter={() => setPaused(true)}
           onMouseLeave={handleMouseLeave}
         >
           {/* Article header */}
-          <div className="border-b border-gray-800 p-4">
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-xs text-indigo-400 font-semibold">{hovered.publisher}</span>
+          <div className="border-b border-gray-800/80 px-4 py-3.5">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-[10px] font-mono font-semibold uppercase tracking-wider text-indigo-400">{hovered.publisher}</span>
               <span className="text-gray-700 text-xs">·</span>
-              <span className="text-xs text-gray-600">{timeAgo(hovered.publishedAt)} ago</span>
+              <span className="text-[10px] font-mono text-gray-600">{timeAgo(hovered.publishedAt)} ago</span>
             </div>
             <a
               href={hovered.link}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-sm font-semibold text-white hover:text-indigo-300 transition-colors leading-snug line-clamp-3"
+              className="text-sm font-semibold text-white hover:text-indigo-300 transition-colors leading-snug line-clamp-3 block"
             >
-              {hovered.title} ↗
+              {hovered.title} <span className="text-gray-600">↗</span>
             </a>
           </div>
 
           {/* AI impact */}
-          <div className="p-4">
+          <div className="px-4 py-3.5">
             {impactLoading ? (
-              <div className="flex items-center gap-2 text-xs text-gray-600">
-                <div className="h-3 w-3 animate-spin rounded-full border border-gray-600 border-t-indigo-400" />
+              <div className="flex items-center gap-2 text-[11px] font-mono text-gray-600">
+                <div className="h-3 w-3 animate-spin rounded-full border border-gray-700 border-t-indigo-400" />
                 Analysing market impact…
               </div>
             ) : impact ? (
               <div className="space-y-3">
-                <p className="text-xs text-gray-400 leading-relaxed">{impact.summary}</p>
+                <p className="text-[11px] text-gray-400 leading-relaxed">{impact.summary}</p>
                 {impact.impacts.length > 0 && (
-                  <div className="space-y-1.5">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">Portfolio Impact</p>
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-gray-600">
+                      Portfolio Impact
+                    </p>
                     {impact.impacts.map((imp) => {
                       const s = EFFECT_STYLE[imp.effect];
                       return (
                         <div key={imp.ticker} className="flex items-start gap-2">
-                          <span className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${s.dot}`} />
+                          <span className={`mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full ${s.dot}`} />
                           <div className="min-w-0">
-                            <span className={`text-xs font-mono font-bold ${s.text}`}>{imp.ticker}</span>
-                            <span className="text-xs text-gray-500 ml-1.5">{imp.reason}</span>
+                            <span className={`text-[11px] font-mono font-bold ${s.text}`}>{imp.ticker}</span>
+                            <span className="text-[11px] text-gray-500 ml-1.5">{imp.reason}</span>
                           </div>
                         </div>
                       );
@@ -177,7 +187,7 @@ export default function NewsTicker({ companies }: { companies: Company[] }) {
                   </div>
                 )}
                 {impact.impacts.length === 0 && (
-                  <p className="text-xs text-gray-600 italic">No direct portfolio impact identified.</p>
+                  <p className="text-[10px] font-mono text-gray-700 italic">No direct portfolio impact identified.</p>
                 )}
               </div>
             ) : null}

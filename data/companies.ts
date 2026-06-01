@@ -13,6 +13,8 @@ export const companies: Company[] = [
       { text: "Blackwell architecture launch accelerating", type: "positive", source: "Company announcement" },
       { text: "China export restrictions limit TAM", type: "negative", source: "US Commerce Dept." },
     ],
+    dividendRate: 0.04,
+    dividendYield: 0.00003,
   },
   {
     id: 2,
@@ -39,6 +41,8 @@ export const companies: Company[] = [
       { text: "Copilot M365 seat growth accelerating", type: "positive", source: "Company filing" },
       { text: "Gaming segment underperforming", type: "negative", source: "Earnings report" },
     ],
+    dividendRate: 3.00,
+    dividendYield: 0.0072,
   },
   {
     id: 4,
@@ -52,6 +56,8 @@ export const companies: Company[] = [
       { text: "Value-added services revenue growing 20%+", type: "positive", source: "Company filing" },
       { text: "CBDC development poses long-term risk", type: "neutral", source: "Industry analysis" },
     ],
+    dividendRate: 2.08,
+    dividendYield: 0.0075,
   },
   {
     id: 5,
@@ -65,6 +71,8 @@ export const companies: Company[] = [
       { text: "Talc litigation mostly resolved", type: "positive", source: "Court filings" },
       { text: "Patent cliff on key drugs approaching", type: "negative", source: "Pipeline analysis" },
     ],
+    dividendRate: 4.76,
+    dividendYield: 0.031,
   },
   {
     id: 6,
@@ -78,6 +86,8 @@ export const companies: Company[] = [
       { text: "Emerging market penetration accelerating", type: "positive", source: "Company presentation" },
       { text: "Private label competition intensifying", type: "negative", source: "Retail data" },
     ],
+    dividendRate: 3.76,
+    dividendYield: 0.023,
   },
   {
     id: 7,
@@ -104,6 +114,8 @@ export const companies: Company[] = [
       { text: "ESPN linear ratings declining", type: "negative", source: "Nielsen data" },
       { text: "Parks remain bright spot for cash flow", type: "positive", source: "Earnings call" },
     ],
+    dividendRate: 0.45,
+    dividendYield: 0.005,
   },
   {
     id: 9,
@@ -117,6 +129,8 @@ export const companies: Company[] = [
       { text: "PBM reimbursement rates declining", type: "negative", source: "Industry data" },
       { text: "VillageMD clinics underperforming targets", type: "negative", source: "Earnings call" },
     ],
+    dividendRate: 0.25,
+    dividendYield: 0.014,
   },
   {
     id: 10,
@@ -130,6 +144,8 @@ export const companies: Company[] = [
       { text: "Threads gaining traction vs Twitter", type: "positive", source: "Third-party data" },
       { text: "Reality Labs burning $15B+ annually", type: "negative", source: "Company filing" },
     ],
+    dividendRate: 0.80,
+    dividendYield: 0.0015,
   },
   {
     id: 11,
@@ -143,6 +159,8 @@ export const companies: Company[] = [
       { text: "India manufacturing diversification on track", type: "positive", source: "Supply chain data" },
       { text: "China sales declining in competitive market", type: "negative", source: "Earnings call" },
     ],
+    dividendRate: 1.00,
+    dividendYield: 0.0053,
   },
   {
     id: 12,
@@ -156,6 +174,8 @@ export const companies: Company[] = [
       { text: "YouTube Shorts monetization improving", type: "positive", source: "Earnings call" },
       { text: "DOJ antitrust remedies creating uncertainty", type: "negative", source: "Court filings" },
     ],
+    dividendRate: 0.80,
+    dividendYield: 0.0046,
   },
   {
     id: 13,
@@ -182,6 +202,8 @@ export const companies: Company[] = [
       { text: "Seagen acquisition costs weighing on FCF", type: "negative", source: "Company filing" },
       { text: "Oncology pipeline has several late-stage assets", type: "positive", source: "Pipeline analysis" },
     ],
+    dividendRate: 1.68,
+    dividendYield: 0.062,
   },
   {
     id: 15,
@@ -195,6 +217,8 @@ export const companies: Company[] = [
       { text: "F-150 Lightning demand below initial projections", type: "negative", source: "Company filing" },
       { text: "Pro commercial vehicle segment strong", type: "positive", source: "Earnings call" },
     ],
+    dividendRate: 0.60,
+    dividendYield: 0.05,
   },
   {
     id: 16,
@@ -208,6 +232,8 @@ export const companies: Company[] = [
       { text: "Investment banking recovery underway", type: "positive", source: "Earnings report" },
       { text: "CRE loan exposure being monitored", type: "neutral", source: "Regulatory filing" },
     ],
+    dividendRate: 5.00,
+    dividendYield: 0.025,
   },
   {
     id: 17,

@@ -18,18 +18,40 @@ body {
   overflow: hidden;
   background: var(--background);
   color: var(--foreground);
+  background-image:
+    radial-gradient(ellipse at 15% 40%, rgba(99, 102, 241, 0.04) 0%, transparent 55%),
+    radial-gradient(ellipse at 85% 15%, rgba(52, 211, 153, 0.025) 0%, transparent 45%),
+    radial-gradient(circle at 1px 1px, rgba(55, 65, 81, 0.35) 1px, transparent 0);
+  background-size: auto, auto, 28px 28px;
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #374151 transparent;
+  scrollbar-color: #1f2937 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #1f2937;
+  border-radius: 2px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #374151;
 }
 
 @keyframes ticker {
   from { transform: translateX(0); }
   to   { transform: translateX(-50%); }
 }
-
 
 @keyframes loader-fade-in {
   from { opacity: 0; }
@@ -41,3 +63,12 @@ body {
   to   { opacity: 0; }
 }
 
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

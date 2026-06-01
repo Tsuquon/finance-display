@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import YFDefault from "yahoo-finance2";
 import type { Signal } from "@/types";
+import { sql } from "@/lib/db";
 
 const yf = new (YFDefault as any)({
   suppressNotices: ["ripHistorical", "yahooSurvey"],
@@ -30,9 +31,7 @@ Rules:
 - text must be an investment-relevant observation, not a headline restatement
 - cover a mix of sentiment types where the news supports it`;
 
-type CacheEntry = { data: Signal[]; at: number };
-const cache = new Map<string, CacheEntry>();
-const TTL = 15 * 60 * 1000;
+const TTL_MS = 15 * 60 * 1000;
 
 export async function GET(
   _req: NextRequest,
@@ -40,8 +39,13 @@ export async function GET(
 ) {
   const { ticker } = await params;
 
-  const hit = cache.get(ticker);
-  if (hit && Date.now() - hit.at < TTL) return NextResponse.json(hit.data);
+  const rows = await sql`
+    SELECT signals, refreshed_at FROM stock_signals WHERE ticker = ${ticker}
+  `;
+  if (rows.length > 0) {
+    const age = Date.now() - new Date(rows[0].refreshed_at as string).getTime();
+    if (age < TTL_MS) return NextResponse.json(rows[0].signals);
+  }
 
   let articles: { title: string; publisher: string; link: string }[] = [];
   try {
@@ -69,7 +73,12 @@ export async function GET(
     const jsonText = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
     const signals: Signal[] = JSON.parse(jsonText);
 
-    cache.set(ticker, { data: signals, at: Date.now() });
+    await sql`
+      INSERT INTO stock_signals (ticker, signals, refreshed_at)
+      VALUES (${ticker}, ${JSON.stringify(signals)}, now())
+      ON CONFLICT (ticker) DO UPDATE
+        SET signals = EXCLUDED.signals, refreshed_at = now()
+    `;
     return NextResponse.json(signals);
   } catch {
     return NextResponse.json([]);

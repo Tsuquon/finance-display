@@ -4,12 +4,15 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:demo": "DEMO_MODE=true IBKR_MOCK=true next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.100.1",
+    "@neondatabase/auth": "^0.4.1-beta",
+    "@neondatabase/serverless": "^1.1.0",
     "@types/recharts": "^1.8.29",
     "next": "16.2.6",
     "react": "19.2.4",

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Company } from "@/types";
 import { scoreStore, SCORE_TTL } from "@/lib/scoreStore";
+import { sql } from "@/lib/db";
 
 const anthropic = new Anthropic();
 
@@ -9,10 +10,6 @@ export type ScoreResult = {
   shortTerm: { score: number; rationale: string };
   longTerm: { score: number; rationale: string };
 };
-
-type CacheEntry = { data: ScoreResult; at: number };
-const cache = new Map<string, CacheEntry>();
-const TTL = SCORE_TTL;
 
 const SYSTEM = `You are an equity analyst. Given a company profile, return ONLY a JSON object (no markdown):
 {"shortTerm":{"score":N,"rationale":"one sentence max 15 words"},"longTerm":{"score":N,"rationale":"one sentence max 15 words"}}
@@ -25,17 +22,30 @@ Base scores on category, thesis, signals, and typical fundamentals for this comp
 export async function POST(req: NextRequest) {
   const company: Company = await req.json();
 
-  // Prefer the shared store written by the batch route — guarantees card & panel show the same number
+  // 1. Shared in-memory store (populated by batch route in same process lifetime)
   const shared = scoreStore.get(company.ticker);
-  if (shared && Date.now() - shared.at < TTL) {
+  if (shared && Date.now() - shared.at < SCORE_TTL) {
     return NextResponse.json(shared.data);
   }
 
-  const hit = cache.get(company.ticker);
-  if (hit && Date.now() - hit.at < TTL) {
-    return NextResponse.json(hit.data);
+  // 2. DB (survives restarts)
+  const rows = await sql`
+    SELECT st, lt, st_rationale, lt_rationale, refreshed_at
+    FROM ticker_scores WHERE ticker = ${company.ticker}
+  `;
+  if (rows.length > 0) {
+    const age = Date.now() - new Date(rows[0].refreshed_at as string).getTime();
+    if (age < SCORE_TTL) {
+      const result: ScoreResult = {
+        shortTerm: { score: rows[0].st as number, rationale: rows[0].st_rationale as string },
+        longTerm:  { score: rows[0].lt as number, rationale: rows[0].lt_rationale as string },
+      };
+      scoreStore.set(company.ticker, { data: result, at: Date.now() });
+      return NextResponse.json(result);
+    }
   }
 
+  // 3. Claude fallback
   const prompt = `Ticker: ${company.ticker}
 Name: ${company.name}
 Industry: ${company.industry}
@@ -54,12 +64,21 @@ Signals: ${company.signals.map((s) => `[${s.type}] ${s.text}`).join("; ")}`;
   const jsonText = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
   const result: ScoreResult = JSON.parse(jsonText);
 
-  // Clamp scores to 1–10
   result.shortTerm.score = Math.min(10, Math.max(1, Math.round(result.shortTerm.score)));
-  result.longTerm.score = Math.min(10, Math.max(1, Math.round(result.longTerm.score)));
+  result.longTerm.score  = Math.min(10, Math.max(1, Math.round(result.longTerm.score)));
 
   const now = Date.now();
-  cache.set(company.ticker, { data: result, at: now });
   scoreStore.set(company.ticker, { data: result, at: now });
+
+  await sql`
+    INSERT INTO ticker_scores (ticker, st, lt, st_rationale, lt_rationale, refreshed_at)
+    VALUES (${company.ticker}, ${result.shortTerm.score}, ${result.longTerm.score},
+            ${result.shortTerm.rationale}, ${result.longTerm.rationale}, now())
+    ON CONFLICT (ticker) DO UPDATE
+      SET st = EXCLUDED.st, lt = EXCLUDED.lt,
+          st_rationale = EXCLUDED.st_rationale, lt_rationale = EXCLUDED.lt_rationale,
+          refreshed_at = now()
+  `;
+
   return NextResponse.json(result);
 }

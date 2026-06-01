@@ -1,14 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
 import type { Signal, Company } from "@/types";
+import { sql } from "@/lib/db";
 
 const client = new Anthropic();
 
 const SYSTEM_PROMPT = `You are a market intelligence analyst. Given a company and one of its market signals, expand it into 2-3 sentences of deeper context: what's driving it, why it matters to the thesis, and what to watch next. Be specific and analytical. No generic filler.`;
 
-type CacheEntry = { text: string; at: number };
-const cache = new Map<string, CacheEntry>();
-const TTL = 60 * 60 * 1000; // 1 hour
+const TTL_MS = 60 * 60 * 1000; // 1 hour
 
 const HEADERS = { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" };
 
@@ -18,11 +17,15 @@ export async function POST(req: NextRequest) {
   }
 
   const { company, signal }: { company: Company; signal: Signal } = await req.json();
-
   const cacheKey = `${company.ticker}:${signal.text}`;
-  const hit = cache.get(cacheKey);
-  if (hit && Date.now() - hit.at < TTL) {
-    return new Response(hit.text, { headers: HEADERS });
+
+  // Check DB cache
+  const rows = await sql`
+    SELECT expansion, refreshed_at FROM signal_expansions WHERE cache_key = ${cacheKey}
+  `;
+  if (rows.length > 0) {
+    const age = Date.now() - new Date(rows[0].refreshed_at as string).getTime();
+    if (age < TTL_MS) return new Response(rows[0].expansion as string, { headers: HEADERS });
   }
 
   let accumulated = "";
@@ -32,7 +35,6 @@ export async function POST(req: NextRequest) {
       const stream = client.messages.stream({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 200,
-        // system prompt is ~60 tokens — below any model's cache minimum, so no cache_control
         system: SYSTEM_PROMPT,
         messages: [
           {
@@ -49,7 +51,12 @@ export async function POST(req: NextRequest) {
 
       try {
         await stream.finalMessage();
-        cache.set(cacheKey, { text: accumulated, at: Date.now() });
+        await sql`
+          INSERT INTO signal_expansions (cache_key, expansion, refreshed_at)
+          VALUES (${cacheKey}, ${accumulated}, now())
+          ON CONFLICT (cache_key) DO UPDATE
+            SET expansion = EXCLUDED.expansion, refreshed_at = now()
+        `;
       } catch (err) {
         controller.error(err);
         return;

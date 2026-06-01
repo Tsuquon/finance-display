@@ -8,8 +8,6 @@ interface QuoteData {
 }
 
 // Generates factual signals from live Yahoo Finance data.
-// fiftyTwoWeekChangePercent arrives as a decimal fraction (0.45 = 45%) from both
-// the screener and quote APIs.
 export function makeSignals(q: QuoteData, ticker?: string): Signal[] {
   const sourceUrl = ticker
     ? `https://finance.yahoo.com/quote/${ticker}/key-statistics/`
@@ -28,9 +26,9 @@ export function makeSignals(q: QuoteData, ticker?: string): Signal[] {
     });
   }
 
-  // 52-week return (decimal fraction → %)
+  // 52-week return — Yahoo Finance screener returns this already as a percentage
   if (q.fiftyTwoWeekChangePercent != null) {
-    const pct = q.fiftyTwoWeekChangePercent * 100;
+    const pct = q.fiftyTwoWeekChangePercent;
     const sign = pct >= 0 ? "+" : "";
     signals.push({
       text: `52-week return ${sign}${pct.toFixed(1)}%`,

@@ -2,15 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { Company } from "@/types";
 import { scoreStore, SCORE_TTL } from "@/lib/scoreStore";
+import { sql } from "@/lib/db";
 
 const anthropic = new Anthropic();
 
 export type BatchScore = { st: number; lt: number };
 export type BatchScoreMap = Record<string, BatchScore>;
-
-type CacheEntry = { data: BatchScoreMap; at: number };
-let cache: CacheEntry | null = null;
-const TTL = 60 * 60 * 1000; // 1 hour
 
 const SYSTEM = `You are an equity analyst. Given a list of companies, return ONLY a compact JSON array (no markdown):
 [{"ticker":"...","st":N,"stRationale":"one sentence max 12 words","lt":N,"ltRationale":"one sentence max 12 words"},...]
@@ -21,18 +18,41 @@ Higher = more favourable. Rationales must be specific to the company.`;
 
 export async function POST(req: NextRequest) {
   const { companies }: { companies: Company[] } = await req.json();
+  const tickers = companies.map((c) => c.ticker);
 
-  const key = companies.map(c => c.ticker).sort().join(",");
-  if (cache && Date.now() - cache.at < TTL) {
-    const cachedKey = Object.keys(cache.data).sort().join(",");
-    if (cachedKey === key) return NextResponse.json(cache.data);
+  // Check DB: if all tickers have fresh scores, return without calling Claude
+  const rows = await sql`
+    SELECT ticker, st, lt, st_rationale, lt_rationale, refreshed_at
+    FROM ticker_scores
+    WHERE ticker = ANY(${tickers})
+  `;
+  const freshRows = rows.filter(
+    (r) => Date.now() - new Date(r.refreshed_at as string).getTime() < SCORE_TTL
+  );
+
+  if (freshRows.length === tickers.length) {
+    const data: BatchScoreMap = {};
+    const now = Date.now();
+    for (const r of freshRows) {
+      const st = r.st as number;
+      const lt = r.lt as number;
+      data[r.ticker as string] = { st, lt };
+      scoreStore.set(r.ticker as string, {
+        data: {
+          shortTerm: { score: st, rationale: r.st_rationale as string },
+          longTerm: { score: lt, rationale: r.lt_rationale as string },
+        },
+        at: now,
+      });
+    }
+    return NextResponse.json(data);
   }
 
-  const payload = companies.map(c => ({
+  const payload = companies.map((c) => ({
     ticker: c.ticker,
     category: c.category,
     reason: c.reason,
-    signals: c.signals.map(s => `[${s.type}] ${s.text}`).join("; "),
+    signals: c.signals.map((s) => `[${s.type}] ${s.text}`).join("; "),
   }));
 
   const msg = await anthropic.messages.create({
@@ -59,7 +79,6 @@ export async function POST(req: NextRequest) {
     const lt = Math.min(10, Math.max(1, Math.round(item.lt)));
     data[item.ticker] = { st, lt };
 
-    // Write full result to shared store so /api/score returns the same numbers
     scoreStore.set(item.ticker, {
       data: {
         shortTerm: { score: st, rationale: item.stRationale ?? "" },
@@ -69,6 +88,20 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  cache = { data, at: now };
-  return NextResponse.json(data);
+  // Upsert all scores to DB
+  for (const item of arr) {
+    const st = Math.min(10, Math.max(1, Math.round(item.st)));
+    const lt = Math.min(10, Math.max(1, Math.round(item.lt)));
+    await sql`
+      INSERT INTO ticker_scores (ticker, st, lt, st_rationale, lt_rationale, refreshed_at)
+      VALUES (${item.ticker}, ${st}, ${lt}, ${item.stRationale ?? ""}, ${item.ltRationale ?? ""}, now())
+      ON CONFLICT (ticker) DO UPDATE
+        SET st = EXCLUDED.st, lt = EXCLUDED.lt,
+            st_rationale = EXCLUDED.st_rationale, lt_rationale = EXCLUDED.lt_rationale,
+            refreshed_at = now()
+    `;
+  }
+
+  const totalTokens = (msg.usage.input_tokens ?? 0) + (msg.usage.output_tokens ?? 0);
+  return NextResponse.json(data, { headers: { "X-Tokens-Used": String(totalTokens) } });
 }

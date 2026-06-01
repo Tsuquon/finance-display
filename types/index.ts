@@ -1,4 +1,4 @@
-export type TimeRange = "1D" | "1W" | "1M" | "3M" | "1Y";
+export type TimeRange = "1H" | "1D" | "1W" | "1M" | "3M" | "1Y";
 
 export type CategoryKey = "future" | "stable" | "fading";
 
@@ -17,6 +17,8 @@ export interface Company {
   ticker: string;
   reason: string;
   signals: Signal[];
+  dividendYield?: number;  // annual yield as decimal (e.g. 0.025 = 2.5%)
+  dividendRate?: number;   // annual dividend in dollars per share
 }
 
 export interface CategoryConfig {

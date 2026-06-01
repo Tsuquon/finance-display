@@ -4,6 +4,7 @@ import YFDefault from "yahoo-finance2";
 import type { Company } from "@/types";
 import { normalizeIndustry } from "@/lib/normalizeIndustry";
 import { makeSignals } from "@/lib/makeSignals";
+import { sql } from "@/lib/db";
 
 const yf = new (YFDefault as any)({
   suppressNotices: ["ripHistorical", "yahooSurvey"],
@@ -44,38 +45,49 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Ticker "${symbol}" not found.` }, { status: 404 });
   }
 
-  const payload = {
-    ticker: quote.symbol,
-    name: quote.shortName ?? quote.longName ?? quote.symbol,
-    marketCapB: quote.marketCap ? (quote.marketCap / 1e9).toFixed(1) : null,
-  };
+  // Classification rarely changes — use cached version indefinitely
+  const cached = await sql`SELECT data FROM ticker_classification WHERE ticker = ${symbol}`;
 
-  const msg = await anthropic.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 300,
-    system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
-    messages: [{ role: "user", content: JSON.stringify(payload) }],
-  });
+  let ai: { industry: string; category: string; reason: string; signal: { text: string; type: "positive" | "negative" | "neutral"; source: string } };
 
-  const raw = msg.content[0].type === "text" ? msg.content[0].text : "{}";
-  const jsonText = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-  const ai = JSON.parse(jsonText);
+  if (cached.length > 0) {
+    ai = cached[0].data as typeof ai;
+  } else {
+    const payload = {
+      ticker: quote.symbol,
+      name: quote.shortName ?? quote.longName ?? quote.symbol,
+      marketCapB: quote.marketCap ? (quote.marketCap / 1e9).toFixed(1) : null,
+    };
+
+    const msg = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 300,
+      system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: JSON.stringify(payload) }],
+    });
+
+    const raw = msg.content[0].type === "text" ? msg.content[0].text : "{}";
+    const jsonText = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+    ai = JSON.parse(jsonText);
+
+    await sql`
+      INSERT INTO ticker_classification (ticker, data, refreshed_at)
+      VALUES (${symbol}, ${JSON.stringify(ai)}, now())
+      ON CONFLICT (ticker) DO UPDATE SET data = EXCLUDED.data, refreshed_at = now()
+    `;
+  }
 
   const newId = Math.max(0, ...existingIds) + 1;
-
   const dataSignals = makeSignals(quote, quote.symbol);
   const aiSignal = ai.signal;
-  const signals = [
-    ...dataSignals,
-    ...(aiSignal ? [aiSignal] : []),
-  ].slice(0, 4);
+  const signals = [...dataSignals, ...(aiSignal ? [aiSignal] : [])].slice(0, 4);
 
   const company: Company = {
     id: newId,
     ticker: quote.symbol,
     name: quote.shortName ?? quote.longName ?? quote.symbol,
     industry: normalizeIndustry(ai.industry),
-    category: ai.category ?? "stable",
+    category: (ai.category as Company["category"]) ?? "stable",
     reason: ai.reason ?? "",
     signals,
   };

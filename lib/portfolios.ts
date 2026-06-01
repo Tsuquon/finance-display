@@ -1,6 +1,6 @@
 export const PORTFOLIOS_KEY = "finance-saved-portfolios";
 
-export type Mode = "aggressive" | "balanced" | "conservative";
+export type Mode = "aggressive" | "balanced" | "conservative" | "momentum" | "value" | "growth" | "income" | "custom";
 
 export interface InvestedPosition {
   ticker: string;
@@ -20,6 +20,8 @@ export interface SnapshotRow {
   aiLt: number;
   techScore: number;
   signal: string;
+  quantScore?: number;
+  dividendYield?: number;
 }
 
 export interface InvestmentRecord {
@@ -41,6 +43,9 @@ export interface SavedPortfolio {
   excluded: string[];
   snapshot?: SnapshotRow[];      // frozen allocations at save time
   investment?: InvestmentRecord;
+  maxPosition?: number;          // per-position cap %, default 20
+  equalWeight?: boolean;         // allocate equally instead of score-proportional
+  customAmounts?: Record<string, number>; // ticker → dollar amount (custom strategy)
 }
 
 export function loadPortfolios(): SavedPortfolio[] {

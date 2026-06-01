@@ -7,6 +7,7 @@ interface Props {
   techTotal: number;
   scoresReady: boolean;
   companiesReady: boolean;
+  scoresTokens?: number;
   contained?: boolean; // absolute positioning (for sheet mode)
 }
 
@@ -36,6 +37,7 @@ export default function PortfolioLoadingScreen({
   techTotal,
   scoresReady,
   companiesReady,
+  scoresTokens = 0,
   contained,
 }: Props) {
   const [visible, setVisible] = useState(true);
@@ -76,6 +78,7 @@ export default function PortfolioLoadingScreen({
       done: scoresReady,
       active: companiesReady && !scoresReady,
       progress: null,
+      tokens: scoresTokens,
     },
     {
       label: "Fetching market data",
@@ -92,7 +95,7 @@ export default function PortfolioLoadingScreen({
 
   return (
     <div
-      className={`${contained ? "absolute inset-0 z-10" : "fixed inset-0 z-50"} flex flex-col items-center justify-center gap-10`}
+      className={`${contained ? "absolute inset-0 z-20" : "fixed inset-0 z-50"} flex flex-col items-center justify-center gap-10`}
       style={{
         background: "#161310",
         animation: allDone
@@ -156,6 +159,14 @@ export default function PortfolioLoadingScreen({
 
             {s.progress && (s.active || s.done) && (
               <ProgressPill value={s.progress.value} total={s.progress.total} />
+            )}
+            {s.tokens != null && s.tokens > 0 && (s.active || s.done) && (
+              <span
+                className="ml-2 font-mono tabular-nums"
+                style={{ color: "#E0703F", opacity: 0.75, fontSize: "0.65rem" }}
+              >
+                {s.tokens.toLocaleString()} tok
+              </span>
             )}
           </div>
         ))}
