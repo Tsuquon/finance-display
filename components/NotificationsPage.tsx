@@ -80,9 +80,18 @@ export default function NotificationsPage() {
       const res = await fetch("/api/alerts/test", { method: "POST" });
       const data = await res.json();
       if (data.ok) {
-        setNote(`Test notification sent to ${data.to}. Check your inbox.`);
+        const channels = Array.isArray(data.delivered) && data.delivered.length > 0
+          ? data.delivered.join(" + ")
+          : "your configured channels";
+        const partial = Array.isArray(data.errors) && data.errors.length > 0
+          ? ` (but ${data.errors.join("; ")})`
+          : "";
+        setNote(`Test notification sent via ${channels}.${partial}`);
       } else {
-        setNote(`Couldn't send test: ${data.error ?? "unknown error"}`);
+        const why = Array.isArray(data.errors) && data.errors.length > 0
+          ? data.errors.join("; ")
+          : data.error ?? "unknown error";
+        setNote(`Couldn't send test: ${why}`);
       }
     } catch {
       setNote("Couldn't send the test notification.");
@@ -98,10 +107,21 @@ export default function NotificationsPage() {
       const res = await fetch("/api/alerts/evaluate", { method: "POST" });
       const data = await res.json();
       const n = Array.isArray(data.triggered) ? data.triggered.length : 0;
-      if (data.emailError) {
-        setNote(`Checked ${data.checked ?? 0}. ${n} fired, but email failed: ${data.emailError}`);
+      if (n === 0) {
+        setNote("Checked. Nothing triggered.");
       } else {
-        setNote(n > 0 ? `${n} alert${n > 1 ? "s" : ""} just fired — emailed you.` : "Checked. Nothing triggered.");
+        // A channel delivered if it reported no error (evaluate sets pushError/
+        // emailError when a channel is unconfigured or its send failed).
+        const delivered: string[] = [];
+        if (!data.pushError) delivered.push("Telegram");
+        if (!data.emailError) delivered.push("email");
+        const plural = `${n} alert${n > 1 ? "s" : ""}`;
+        if (delivered.length > 0) {
+          setNote(`${plural} just fired — notified via ${delivered.join(" + ")}.`);
+        } else {
+          const why = [data.pushError, data.emailError].filter(Boolean).join("; ");
+          setNote(`${plural} fired, but no notification went out: ${why}`);
+        }
       }
       await load();
     } catch {
