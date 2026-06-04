@@ -4,6 +4,7 @@ import { getStockStatistics, type StockStatistics } from "@/lib/stockStats";
 import { sendEmail, alertRecipient, emailConfigured } from "@/lib/email";
 import { sendPush, pushConfigured } from "@/lib/push";
 import { getTechnicals, getNewsArticles } from "@/lib/marketData";
+import { refreshStaleScores } from "@/lib/scoring";
 
 let anthropic: Anthropic | null = null;
 function getAnthropic(): Anthropic | null {
@@ -359,7 +360,22 @@ export async function evaluateAlerts(): Promise<{
     () => ({}) as Record<string, StockStatistics>
   );
 
-  // AI scores from the DB.
+  // Score & AI alerts depend on the AI-generated st/lt scores. Those are cached
+  // in ticker_scores by the dashboard — but in a headless run (cron) the
+  // dashboard isn't open, so refresh any that are stale BEFORE reading them.
+  // TTL-gated inside refreshStaleScores, so it spends no tokens when fresh.
+  const needScores = [
+    ...new Set(alerts.filter((a) => a.kind === "score" || a.kind === "ai").map((a) => a.ticker)),
+  ];
+  if (needScores.length > 0) {
+    try {
+      await refreshStaleScores(needScores);
+    } catch (err) {
+      console.error("evaluateAlerts: score refresh failed:", err);
+    }
+  }
+
+  // AI scores from the DB (now freshened above for score/ai alerts).
   const scoreRows = (await sql`
     SELECT ticker, st, lt FROM ticker_scores WHERE ticker = ANY(${tickers})
   `) as Array<{ ticker: string; st: number; lt: number }>;
