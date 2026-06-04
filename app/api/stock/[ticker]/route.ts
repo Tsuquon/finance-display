@@ -46,14 +46,20 @@ export async function GET(
   // Always pull live prices from Yahoo (native currency per listing, e.g. AUD
   // for ".AX" tickers) so the chart reflects real, updating market data.
   try {
+    // yahoo-finance2 v3's chart() no longer accepts a `range` shortcut, so we
+    // always pass period1/interval. Intraday ranges look back several days to
+    // survive weekends/holidays, then trim to the window we actually want.
     let opts: Record<string, unknown>;
     if (range === "1H") {
-      // 1-min bars for the current trading day; we'll slice to the last 60
-      opts = { range: "1d", interval: "1m" };
+      // 1-min bars; we'll slice to the last 60
+      const period1 = new Date();
+      period1.setDate(period1.getDate() - 4);
+      opts = { period1, interval: "1m" };
     } else if (range === "1D") {
-      // Use Yahoo's built-in range — always returns the most recent trading day,
-      // even on weekends when period1=yesterday would return empty.
-      opts = { range: "1d", interval: "5m" };
+      // 5-min bars; we'll keep only the most recent trading day
+      const period1 = new Date();
+      period1.setDate(period1.getDate() - 5);
+      opts = { period1, interval: "5m" };
     } else {
       const { days, interval } = RANGE_CONFIG[range];
       const period1 = new Date();
@@ -66,6 +72,11 @@ export async function GET(
     let quotes = (result.quotes ?? []).filter((q) => q.close !== null);
     // For 1H: keep only the last 60 minutes of data
     if (range === "1H") quotes = quotes.slice(-60);
+    // For 1D: keep only bars from the most recent trading day present
+    if (range === "1D" && quotes.length) {
+      const lastDay = new Date(quotes[quotes.length - 1].date).toDateString();
+      quotes = quotes.filter((q) => new Date(q.date).toDateString() === lastDay);
+    }
 
     const data: StockDataPoint[] = quotes.map((q) => ({
       date: formatDate(q.date, range),
