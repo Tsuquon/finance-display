@@ -16,10 +16,10 @@ Pre-loaded context per company:
 - AI short-term score (1-10): probability of meaningful price gain in 1-3 months
 - AI long-term score (1-10): probability of strong returns over 1-3 years
 - Analyst research summary
-- Yahoo Finance fundamentals: valuation (P/E, PEG, P/B, P/S, EV/EBITDA), margins, growth, balance-sheet health, dividend, and analyst targets (shown when available)
+- Market fundamentals (US tickers sourced from Finnhub, ASX/".AX" from Yahoo): valuation (P/E, P/B, P/S), margins, growth, balance-sheet health, dividend, and — when available — PEG, EV/EBITDA, and analyst targets. Some fields (forward P/E, PEG, EV/EBITDA, analyst price targets, cash-flow figures, next earnings date) are not available for US tickers on the current data tier and will show as "—"; treat a "—" as missing, not zero, and don't claim to fetch it.
 
 On-demand tools:
-- get_company_statistics(ticker) — full Yahoo Finance fundamentals snapshot for one stock (every metric, plus profile and next earnings date). Use when fundamentals aren't pre-loaded for that ticker, or the user asks about a metric not shown above.
+- get_company_statistics(ticker) — full fundamentals snapshot for one stock (every available metric, plus profile). Use when fundamentals aren't pre-loaded for that ticker, or the user asks about a metric not shown above.
 - get_technical_analysis(ticker) — composite bull/bear score, trend, RSI, MACD, moving averages, support/resistance
 - get_quant_scores() — percentile rankings vs portfolio universe for value, quality, momentum, growth, low-volatility factors
 - get_news(ticker) — most recent Yahoo Finance headlines (title, publisher, time, link) for one stock
@@ -84,7 +84,7 @@ const TOOLS: Anthropic.Messages.Tool[] = [
   {
     name: "get_company_statistics",
     description:
-      "Fetch the full Yahoo Finance fundamentals snapshot for a single stock: price & 52-week range, market cap, beta, full valuation multiples (P/E, forward P/E, PEG, P/B, P/S, EV/EBITDA, EV/revenue), margins (gross/operating/net/EBITDA), ROE/ROA, revenue & earnings growth, balance sheet (revenue, cash, debt, debt-to-equity, current/quick ratio, free & operating cash flow), per-share figures, dividend, analyst recommendation & price targets, share structure/ownership, company profile, and next earnings date. Use when a fundamental metric isn't already pre-loaded for that ticker or the user wants the complete picture.",
+      "Fetch the full fundamentals snapshot for a single stock (US via Finnhub, ASX via Yahoo): price & 52-week range, market cap, beta, valuation multiples (P/E, P/B, P/S, and — when available — forward P/E, PEG, EV/EBITDA, EV/revenue), margins (gross/operating/net), ROE/ROA, revenue & earnings growth, balance sheet (debt-to-equity, current/quick ratio, and where available revenue, cash, debt, cash flow), per-share figures, dividend, analyst recommendation & price targets (where available), share structure/ownership, and company profile. Use when a fundamental metric isn't already pre-loaded for that ticker or the user wants the complete picture. Fields returned as null/\"—\" are unavailable for that ticker on the current data tier — report them as missing, don't infer them.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -207,8 +207,8 @@ export async function POST(req: NextRequest) {
   const tickers = companies.map((c) => c.ticker);
   const origin = new URL(req.url).origin;
 
-  // Batch-fetch scores, analysis, and Yahoo fundamentals in parallel.
-  // Statistics are fetched live from Yahoo for any ticker not already fresh (< 15 min).
+  // Batch-fetch scores, analysis, and fundamentals in parallel.
+  // Statistics are fetched live (US via Finnhub, ASX via Yahoo) for any ticker not already fresh (< 15 min).
   const [scoreRows, analysisRows, statsMap] = await Promise.all([
     tickers.length > 0
       ? sql`SELECT ticker, st, lt, st_rationale, lt_rationale FROM ticker_scores WHERE ticker = ANY(${tickers})`
@@ -232,9 +232,19 @@ export async function POST(req: NextRequest) {
     .map((c) => buildCompanyBlock(c, scoreMap[c.ticker], analysisMap[c.ticker], statsMap[c.ticker.toUpperCase()]))
     .join("\n\n---\n\n");
 
+  // Date-only (YYYY-MM-DD) so the cache key changes at most once per day.
+  const today = new Date().toLocaleDateString("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    weekday: "long",
+  });
+  const dateBlock = `Today's date is ${today} (US market time). All "current", "latest", "recent", or "as of now" figures must reflect this date. Prices, multiples, scores, news, and fundamentals from your training data are stale and likely wrong — never quote a price, market cap, multiple, or recent statistic from memory. When a question depends on a current figure, fetch it with the appropriate tool (get_company_statistics, get_technical_analysis, get_quant_scores, get_news) or use the pre-loaded portfolio data below, and say so. If you cannot obtain a live figure, state that rather than recalling one.`;
+
   const systemBlock: Anthropic.Messages.TextBlockParam = {
     type: "text",
-    text: `${SYSTEM_PROMPT}\n\n## Portfolio\n\n${portfolioContext}`,
+    text: `${SYSTEM_PROMPT}\n\n## Current date\n\n${dateBlock}\n\n## Portfolio\n\n${portfolioContext}`,
     cache_control: { type: "ephemeral" },
   };
 
@@ -243,7 +253,7 @@ export async function POST(req: NextRequest) {
       if (name === "get_company_statistics") {
         const ticker = String(input.ticker ?? "").toUpperCase();
         if (!tickers.includes(ticker)) return `${ticker} is not in this portfolio.`;
-        // Fetches from Yahoo + persists to the DB if not already cached/fresh.
+        // Fetches live (US via Finnhub, ASX via Yahoo) + persists to the DB if not already cached/fresh.
         const map = await getStockStatistics([ticker]);
         const s = map[ticker];
         if (!s) return `Statistics unavailable for ${ticker}.`;

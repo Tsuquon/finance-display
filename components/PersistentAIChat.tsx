@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import type { Company } from "@/types";
+import {
+  loadCustomCompanies,
+  CUSTOM_COMPANIES_KEY,
+  CUSTOM_COMPANIES_KEY_AU,
+} from "@/lib/portfolios";
 
 const AIChat = dynamic(() => import("./AIChat"), { ssr: false });
 
@@ -16,7 +21,36 @@ const AIChat = dynamic(() => import("./AIChat"), { ssr: false });
 export default function PersistentAIChat() {
   const [open, setOpen] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [loaded, setLoaded] = useState(false);
+
+  // Pull both market feeds AND the user's locally-added custom tickers, then
+  // dedupe by ticker. Custom companies live only in localStorage (the screener
+  // feed never contains them), so without merging them the AI reports a stock
+  // the user just added "isn't in this portfolio". Runs on each open and on
+  // every portfolio-changed event so the list is always current.
+  const loadCompanies = useCallback(async () => {
+    const [us, au] = await Promise.all([
+      fetch("/api/companies?market=us").then((r) => r.json()).catch(() => []),
+      fetch("/api/companies?market=au").then((r) => r.json()).catch(() => []),
+    ]);
+    const custom = [
+      ...loadCustomCompanies(CUSTOM_COMPANIES_KEY),
+      ...loadCustomCompanies(CUSTOM_COMPANIES_KEY_AU),
+    ];
+    // Custom tickers first so a user-added entry wins over a feed duplicate.
+    const combined = [
+      ...custom,
+      ...(Array.isArray(us) ? (us as Company[]) : []),
+      ...(Array.isArray(au) ? (au as Company[]) : []),
+    ];
+    const seen = new Set<string>();
+    const deduped = combined.filter((c) => {
+      const k = c.ticker?.toUpperCase();
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    setCompanies(deduped);
+  }, []);
 
   // Let other components (e.g. the Dashboard toolbar button) toggle the chat.
   useEffect(() => {
@@ -25,36 +59,18 @@ export default function PersistentAIChat() {
     return () => window.removeEventListener("toggle-ai-chat", toggle);
   }, []);
 
-  // Lazily load both markets the first time the chat is opened.
+  // Refresh the portfolio when a company is added/removed elsewhere, even while
+  // the chat is open.
   useEffect(() => {
-    if (!open || loaded) return;
-    let cancelled = false;
+    window.addEventListener("portfolio-changed", loadCompanies);
+    return () => window.removeEventListener("portfolio-changed", loadCompanies);
+  }, [loadCompanies]);
 
-    Promise.all([
-      fetch("/api/companies?market=us").then((r) => r.json()).catch(() => []),
-      fetch("/api/companies?market=au").then((r) => r.json()).catch(() => []),
-    ]).then(([us, au]) => {
-      if (cancelled) return;
-      const combined = [
-        ...(Array.isArray(us) ? (us as Company[]) : []),
-        ...(Array.isArray(au) ? (au as Company[]) : []),
-      ];
-      // Dedupe by ticker in case a name appears in both feeds.
-      const seen = new Set<string>();
-      const deduped = combined.filter((c) => {
-        const k = c.ticker?.toUpperCase();
-        if (!k || seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
-      setCompanies(deduped);
-      setLoaded(true);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [open, loaded]);
+  // Reload both markets each time the chat is opened so the list is current.
+  useEffect(() => {
+    if (!open) return;
+    loadCompanies();
+  }, [open, loadCompanies]);
 
   return (
     <>

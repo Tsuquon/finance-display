@@ -123,7 +123,10 @@ export default function PortfolioHome() {
       const have = new Set(existing.map((c) => c.ticker));
       const newOnes = draft.companies.filter((c) => !have.has(c.ticker));
       localStorage.setItem(CUSTOM_KEY, JSON.stringify([...existing, ...newOnes]));
-      if (newOnes.length) void enrichSeededCompanies(newOnes);
+      if (newOnes.length) {
+        void enrichSeededCompanies(newOnes);
+        window.dispatchEvent(new Event("portfolio-changed"));
+      }
     } catch { /* non-fatal — dashboard fetch still populates most tickers */ }
 
     setDraftCustom({ customAmounts: draft.customAmounts, portfolioSize: draft.portfolioSize });

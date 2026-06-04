@@ -305,6 +305,8 @@ export default function Dashboard() {
       const customKey = customKeyFor(market);
       const custom: Company[] = loadCustomCompanies(customKey);
       localStorage.setItem(customKey, JSON.stringify([...custom, data]));
+      // Tell the persistent AI chat to refresh so the new ticker is in scope.
+      window.dispatchEvent(new Event("portfolio-changed"));
       setAddTicker("");
       setAddOpen(false);
     } catch {
@@ -337,6 +339,7 @@ export default function Dashboard() {
     const customKey = customKeyFor(market);
     const custom: Company[] = loadCustomCompanies(customKey);
     localStorage.setItem(customKey, JSON.stringify(custom.filter((c) => c.ticker !== ticker)));
+    window.dispatchEvent(new Event("portfolio-changed"));
   }
 
   const industries = useMemo(() => {

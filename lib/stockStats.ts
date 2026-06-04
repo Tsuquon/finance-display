@@ -1,6 +1,7 @@
 import YFDefault from "yahoo-finance2";
 import { sql } from "@/lib/db";
 import { DEMO_MODE } from "@/lib/ibkr";
+import { fetchFinnhubStatistics, finnhubConfigured } from "@/lib/finnhub";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const yf = new (YFDefault as any)({
@@ -119,9 +120,33 @@ const MAX_PLAUSIBLE_DIV_YIELD = 0.25; // 25%
 const str = (v: unknown): string | null =>
   typeof v === "string" && v.length > 0 ? v : null;
 
+/** A ticker is US-listed when it has no exchange suffix (e.g. "AAPL"); a suffix
+ *  like ".AX" marks a non-US listing (ASX) that only Yahoo covers for free. */
+function isUSListed(ticker: string): boolean {
+  return !ticker.includes(".");
+}
+
+/**
+ * Fetch one ticker's fundamentals, routing by market:
+ *   • US tickers  → Finnhub (reliable, real API), falling back to Yahoo if
+ *     Finnhub can't serve it (no key / error / unknown symbol).
+ *   • ASX & other suffixed tickers → Yahoo, which Finnhub's free tier doesn't
+ *     cover.
+ * Falls through to pure Yahoo behaviour when FINNHUB_API_KEY is unset, so the
+ * app works unchanged without a Finnhub key.
+ */
+export async function fetchStockStatistics(ticker: string): Promise<StockStatistics | null> {
+  if (finnhubConfigured() && isUSListed(ticker)) {
+    const fh = await fetchFinnhubStatistics(ticker);
+    if (fh) return fh;
+    // Finnhub had nothing usable — fall back to Yahoo rather than dropping the ticker.
+  }
+  return fetchYahooStatistics(ticker);
+}
+
 // Pull a comprehensive fundamentals snapshot for one ticker from Yahoo Finance.
 // Returns null if Yahoo has no data / the request fails.
-export async function fetchStockStatistics(ticker: string): Promise<StockStatistics | null> {
+async function fetchYahooStatistics(ticker: string): Promise<StockStatistics | null> {
   try {
     const r = await yf.quoteSummary(ticker, {
       modules: [

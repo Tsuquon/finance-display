@@ -33,7 +33,9 @@ jobs:
         run: npm run alerts:check
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          DEMO_MODE: "true" # force live Yahoo data (CI NODE_ENV is not production)
+          DEMO_MODE: "true" # force live data (CI NODE_ENV is not production)
+          # Finnhub serves US-ticker quotes/fundamentals; Yahoo covers ASX + fallback.
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
