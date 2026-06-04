@@ -9,7 +9,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "worker:build": "esbuild scripts/checkAlerts.ts --bundle --platform=node --format=esm --target=node20 --packages=external --outfile=dist-worker/checkAlerts.mjs",
+    "worker:build": "esbuild scripts/checkAlerts.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=dist-worker/checkAlerts.mjs",
     "worker:run": "node dist-worker/checkAlerts.mjs",
     "alerts:check": "npm run worker:build && npm run worker:run"
   },

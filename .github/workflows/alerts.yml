@@ -24,7 +24,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22" # yahoo-finance2 v3 requires Node >= 22
           cache: "npm"
 
       - run: npm ci
