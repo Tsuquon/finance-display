@@ -42,3 +42,6 @@ next-env.d.ts
 
 # claude code
 .claude/
+
+# headless alert worker build output
+/dist-worker

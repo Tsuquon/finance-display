@@ -2,3 +2,8 @@
 - ai needs to build off online news data rather than pretrained knowledge
 - add in australian + other markets
 - for the add ticker, have it like a search
+- sharp ratio to evaluate profit with risk
+- sortino ratio
+- account for brokerage fees
+- for the ai trading algo, if its a safer bet, invest more money
+- stop loss for trading

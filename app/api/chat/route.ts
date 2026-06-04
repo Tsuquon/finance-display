@@ -2,10 +2,13 @@ import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
 import type { ChatMessage, Company } from "@/types";
 import { sql } from "@/lib/db";
+import { getStockStatistics, formatStatsForPrompt, type StockStatistics } from "@/lib/stockStats";
+import { createAlert, listAlerts, deleteAlert, type AlertKind, type AlertOperator } from "@/lib/alerts";
+import { sendEmail, alertRecipient, emailConfigured } from "@/lib/email";
 
 const client = new Anthropic();
 
-const SYSTEM_PROMPT = `You are an expert portfolio analyst with access to comprehensive data about each company in this portfolio.
+const SYSTEM_PROMPT = `You are a senior equity research analyst advising on this portfolio. Write with the rigor, precision, and measured tone of institutional sell-side research.
 
 Pre-loaded context per company:
 - Category: future (high-growth), stable (established), or fading (declining)
@@ -13,19 +16,42 @@ Pre-loaded context per company:
 - AI short-term score (1-10): probability of meaningful price gain in 1-3 months
 - AI long-term score (1-10): probability of strong returns over 1-3 years
 - Analyst research summary
+- Yahoo Finance fundamentals: valuation (P/E, PEG, P/B, P/S, EV/EBITDA), margins, growth, balance-sheet health, dividend, and analyst targets (shown when available)
 
 On-demand tools:
+- get_company_statistics(ticker) — full Yahoo Finance fundamentals snapshot for one stock (every metric, plus profile and next earnings date). Use when fundamentals aren't pre-loaded for that ticker, or the user asks about a metric not shown above.
 - get_technical_analysis(ticker) — composite bull/bear score, trend, RSI, MACD, moving averages, support/resistance
 - get_quant_scores() — percentile rankings vs portfolio universe for value, quality, momentum, growth, low-volatility factors
+- get_news(ticker) — most recent Yahoo Finance headlines (title, publisher, time, link) for one stock
 
-Default to pre-loaded data for thesis, outlook, and signal questions. Invoke tools only when the user specifically asks about chart patterns, price momentum, technical setups, or quantitative factor rankings.
+Default to pre-loaded data for thesis, outlook, valuation, and signal questions. Invoke get_company_statistics for deeper fundamental detail, get_technical_analysis for chart patterns / price momentum / technical setups, get_quant_scores for cross-portfolio factor rankings, and get_news for current headlines, catalysts, or "why did it move" questions. When citing news, reference the headline and publisher.
 
-Give substantive, data-driven answers. No generic disclaimers.`;
+Alerts:
+- When the user asks to be notified, alerted, or emailed about a stock condition (e.g. "tell me when NVDA drops below $100", "alert me if TSLA's RSI goes above 70", "let me know when there's news on AAPL"), call create_alert. Map the request to the correct kind/field/operator/value and write a concise description. Confirm in one line what you set up. The condition is checked in the background while the app is open and the user is emailed once when it fires.
+- For conditions that are qualitative or combine several signals (e.g. "when NVDA looks overbought and momentum is fading", "if the setup turns bearish", "when there's bad news AND the stock is weak"), use kind 'ai' and put the full condition in 'criteria'. A background AI then re-evaluates the ticker's price, scores, technicals, and news against that condition each check and only emails when it judges the condition met. Prefer a specific numeric kind when one clean threshold captures the request.
+- If the request is ambiguous (no clear threshold, metric, or condition), ask one brief clarifying question before creating the alert.
+- Use list_alerts when asked what alerts exist, and delete_alert to remove one (look up its id first).
+- If the user asks to send a test notification or check that email alerts work, call send_test_notification (it emails the configured address without creating a real alert).
+
+Analytical standards:
+- Lead with the conclusion or thesis, then support it with evidence. State your view plainly before qualifying it.
+- Every claim must be tied to a specific figure (cite the metric and value, e.g. "forward P/E of 28x vs. 5-yr median ~22x"). Never assert momentum, value, or risk without the underlying number.
+- Frame valuation in relative terms — versus the company's own history, sector peers, or the portfolio's factor percentiles — not in isolation.
+- Separate the bull case from the bear case. Name the one or two factors most likely to break the thesis, and what would have to change for you to revise your view.
+- Distinguish hard data from inference. If you are extrapolating beyond the provided figures, say so. If a needed metric is missing, fetch it with a tool rather than speculating.
+- Be precise with terminology (basis points, YoY, NTM/LTM, margin vs. growth) and consistent with units.
+
+Tone and format:
+- Professional, neutral, and direct. No hype, no hedging filler, no marketing language, no emoji.
+- Use tight prose; reach for short bold labels or bullet lists only when they genuinely aid scanning (e.g. Bull case / Bear case / Key risk). Avoid walls of text.
+- Calibrate confidence honestly — "the data supports", "this suggests", "evidence is mixed" — rather than overstating certainty.
+- This is analysis for an informed investor, not advice. Skip boilerplate disclaimers, but never present a recommendation as a guarantee of returns.`;
 
 function buildCompanyBlock(
   company: Company,
   score: { st: number; lt: number; st_rationale: string; lt_rationale: string } | undefined,
-  analysis: string | undefined
+  analysis: string | undefined,
+  stats: StockStatistics | undefined
 ): string {
   const signals =
     company.signals.length > 0
@@ -47,10 +73,29 @@ function buildCompanyBlock(
     lines.push(`Research: ${analysis}`);
   }
 
+  if (stats) {
+    lines.push(`Fundamentals:\n${formatStatsForPrompt(stats)}`);
+  }
+
   return lines.join("\n");
 }
 
 const TOOLS: Anthropic.Messages.Tool[] = [
+  {
+    name: "get_company_statistics",
+    description:
+      "Fetch the full Yahoo Finance fundamentals snapshot for a single stock: price & 52-week range, market cap, beta, full valuation multiples (P/E, forward P/E, PEG, P/B, P/S, EV/EBITDA, EV/revenue), margins (gross/operating/net/EBITDA), ROE/ROA, revenue & earnings growth, balance sheet (revenue, cash, debt, debt-to-equity, current/quick ratio, free & operating cash flow), per-share figures, dividend, analyst recommendation & price targets, share structure/ownership, company profile, and next earnings date. Use when a fundamental metric isn't already pre-loaded for that ticker or the user wants the complete picture.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        ticker: {
+          type: "string",
+          description: "Uppercase stock ticker symbol, e.g. NVDA",
+        },
+      },
+      required: ["ticker"],
+    },
+  },
   {
     name: "get_technical_analysis",
     description:
@@ -75,6 +120,80 @@ const TOOLS: Anthropic.Messages.Tool[] = [
       properties: {},
     },
   },
+  {
+    name: "get_news",
+    description:
+      "Fetch the most recent news headlines for a portfolio stock from Yahoo Finance. Returns article titles, publishers, publish times, and links. Use when the user asks what's happening with a stock, recent news/catalysts, or why it moved. Prefer this over the pre-loaded signals when the user wants current headlines.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        ticker: { type: "string", description: "Uppercase stock ticker symbol, e.g. NVDA" },
+      },
+      required: ["ticker"],
+    },
+  },
+  {
+    name: "create_alert",
+    description:
+      "Set up an email alert that notifies the user when a condition is met for a stock. Translate the user's natural-language request into a structured alert. The condition is checked automatically in the background while the app is open, and the user is emailed once when it fires (one-shot). Kinds & fields:\n" +
+      "- kind 'price': field 'price' (absolute share price) or 'change_percent' (intraday % move). operator 'above'/'below', value = the threshold.\n" +
+      "- kind 'score': field 'st' (short-term 1-10) or 'lt' (long-term 1-10). operator/value as above.\n" +
+      "- kind 'technical': field 'rsi' (0-100), 'composite' (0-100 bull/bear score), or 'change_30d' (% change over 30d). operator/value as above.\n" +
+      "- kind 'news': field 'news', no operator/value. By default fires on any new article. If the user only cares about a certain kind of news (e.g. 'important news', 'earnings', 'M&A or guidance changes', 'analyst upgrades'), pass that intent as 'criteria' — an AI then judges each new headline against it and only emails worthy ones. Omit 'criteria' when the user wants every headline.\n" +
+      "- kind 'ai' (smart/holistic): field 'ai', no operator/value. Use this when the condition is qualitative, combines multiple signals, or can't be reduced to one numeric threshold (e.g. 'when NVDA looks overbought and momentum is fading', 'if TSLA's fundamentals and technicals both point to a pullback', 'when sentiment turns negative'). Put the FULL natural-language condition in 'criteria'. On each check, an AI weighs the ticker's live price, AI scores, technicals, and recent news against that condition and only emails if it's satisfied.\n" +
+      "Prefer a specific kind (price/score/technical) when there is one clear numeric threshold; use 'ai' for multi-factor or qualitative conditions.\n" +
+      "Always pass a concise human-readable 'description' (e.g. 'NVDA drops below $100', 'Material news on AAPL', 'NVDA overbought + fading momentum'). Only use tickers in the portfolio.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        ticker: { type: "string", description: "Uppercase ticker, e.g. NVDA" },
+        kind: { type: "string", enum: ["price", "score", "technical", "news", "ai"], description: "Alert category" },
+        field: {
+          type: "string",
+          enum: ["price", "change_percent", "st", "lt", "rsi", "composite", "change_30d", "news", "ai"],
+          description: "Metric to watch (must match the kind; use 'news' for news, 'ai' for smart alerts)",
+        },
+        operator: { type: "string", enum: ["above", "below"], description: "Comparison direction (omit for news/ai)" },
+        value: { type: "number", description: "Threshold value (omit for news/ai)" },
+        criteria: {
+          type: "string",
+          description: "For news: the kind of news that matters. For ai: the full natural-language condition to evaluate. Omit for threshold kinds.",
+        },
+        description: { type: "string", description: "Short human-readable summary of the alert" },
+      },
+      required: ["ticker", "kind", "field", "description"],
+    },
+  },
+  {
+    name: "list_alerts",
+    description:
+      "List the user's alerts. Use when the user asks what alerts they have set, or before creating one to avoid duplicates. Returns active and previously-triggered alerts.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
+    name: "delete_alert",
+    description:
+      "Delete an alert by its numeric id. Call list_alerts first to find the id the user is referring to.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "number", description: "The alert id to delete" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "send_test_notification",
+    description:
+      "Send a one-off test notification email to the user's configured address to verify that email delivery is working. Use when the user asks to send a test alert / test notification / check that emails work. Does not create or affect any real alert.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
 ];
 
 export async function POST(req: NextRequest) {
@@ -88,14 +207,16 @@ export async function POST(req: NextRequest) {
   const tickers = companies.map((c) => c.ticker);
   const origin = new URL(req.url).origin;
 
-  // Batch-fetch cached scores and analysis from DB in parallel
-  const [scoreRows, analysisRows] = await Promise.all([
+  // Batch-fetch scores, analysis, and Yahoo fundamentals in parallel.
+  // Statistics are fetched live from Yahoo for any ticker not already fresh (< 15 min).
+  const [scoreRows, analysisRows, statsMap] = await Promise.all([
     tickers.length > 0
       ? sql`SELECT ticker, st, lt, st_rationale, lt_rationale FROM ticker_scores WHERE ticker = ANY(${tickers})`
       : Promise.resolve([]),
     tickers.length > 0
       ? sql`SELECT ticker, analysis FROM stock_analysis WHERE ticker = ANY(${tickers})`
       : Promise.resolve([]),
+    getStockStatistics(tickers),
   ]);
 
   const scoreMap = Object.fromEntries(
@@ -108,7 +229,7 @@ export async function POST(req: NextRequest) {
   );
 
   const portfolioContext = companies
-    .map((c) => buildCompanyBlock(c, scoreMap[c.ticker], analysisMap[c.ticker]))
+    .map((c) => buildCompanyBlock(c, scoreMap[c.ticker], analysisMap[c.ticker], statsMap[c.ticker.toUpperCase()]))
     .join("\n\n---\n\n");
 
   const systemBlock: Anthropic.Messages.TextBlockParam = {
@@ -119,6 +240,15 @@ export async function POST(req: NextRequest) {
 
   async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     try {
+      if (name === "get_company_statistics") {
+        const ticker = String(input.ticker ?? "").toUpperCase();
+        if (!tickers.includes(ticker)) return `${ticker} is not in this portfolio.`;
+        // Fetches from Yahoo + persists to the DB if not already cached/fresh.
+        const map = await getStockStatistics([ticker]);
+        const s = map[ticker];
+        if (!s) return `Statistics unavailable for ${ticker}.`;
+        return JSON.stringify(s, null, 2);
+      }
       if (name === "get_technical_analysis") {
         const ticker = String(input.ticker ?? "").toUpperCase();
         if (!tickers.includes(ticker)) return `${ticker} is not in this portfolio.`;
@@ -135,70 +265,161 @@ export async function POST(req: NextRequest) {
         if (!res.ok) return "Quant scores unavailable.";
         return JSON.stringify(await res.json(), null, 2);
       }
+      if (name === "get_news") {
+        const ticker = String(input.ticker ?? "").toUpperCase();
+        if (!tickers.includes(ticker)) return `${ticker} is not in this portfolio.`;
+        const company = companies.find((c) => c.ticker.toUpperCase() === ticker);
+        const qs = company?.name ? `?name=${encodeURIComponent(company.name)}` : "";
+        const res = await fetch(`${origin}/api/news/${encodeURIComponent(ticker)}${qs}`);
+        if (!res.ok) return `News unavailable for ${ticker}.`;
+        const items = (await res.json()) as Array<{
+          title: string;
+          publisher: string;
+          link: string;
+          publishedAt: string;
+        }>;
+        if (items.length === 0) return `No recent news found for ${ticker}.`;
+        return JSON.stringify(
+          items.slice(0, 10).map((n) => ({
+            title: n.title,
+            publisher: n.publisher,
+            publishedAt: n.publishedAt,
+            link: n.link,
+          })),
+          null,
+          2
+        );
+      }
+      if (name === "create_alert") {
+        const ticker = String(input.ticker ?? "").toUpperCase();
+        if (!tickers.includes(ticker)) return `${ticker} is not in this portfolio, so no alert was created.`;
+        const company = companies.find((c) => c.ticker.toUpperCase() === ticker);
+        const { alert, error } = await createAlert({
+          ticker,
+          kind: input.kind as AlertKind,
+          field: String(input.field ?? ""),
+          operator: (input.operator as AlertOperator) ?? null,
+          value: typeof input.value === "number" ? input.value : input.value != null ? Number(input.value) : null,
+          description: String(input.description ?? ""),
+          companyName: company?.name ?? null,
+          criteria: input.criteria != null ? String(input.criteria) : null,
+        });
+        if (error) return `Could not create alert: ${error}`;
+        return `Alert created (id ${alert!.id}): ${alert!.description}. You'll be emailed when it fires.`;
+      }
+      if (name === "list_alerts") {
+        const alerts = await listAlerts();
+        if (alerts.length === 0) return "No alerts are currently set.";
+        return JSON.stringify(
+          alerts.map((a) => ({
+            id: a.id,
+            ticker: a.ticker,
+            description: a.description,
+            status: a.status,
+            triggered_at: a.triggered_at,
+          })),
+          null,
+          2
+        );
+      }
+      if (name === "delete_alert") {
+        const id = Number(input.id);
+        if (!Number.isFinite(id)) return "Invalid alert id.";
+        const ok = await deleteAlert(id);
+        return ok ? `Alert ${id} deleted.` : `No alert found with id ${id}.`;
+      }
+      if (name === "send_test_notification") {
+        if (!emailConfigured()) {
+          return "Email isn't configured — set GMAIL_USER and GMAIL_APP_PASSWORD in .env.local first.";
+        }
+        const to = alertRecipient();
+        const result = await sendEmail({
+          subject: "✅ Portfolio Lens — test notification",
+          text: `This is a test notification from Portfolio Lens. Email alerts are working and will be delivered to ${to}.`,
+          html: `<div style="font-family:system-ui,sans-serif"><h2>✅ Test notification</h2><p>Email alerts are working and will be delivered to <strong>${to}</strong>.</p></div>`,
+        });
+        return result.ok
+          ? `Test notification sent to ${to}. Tell the user to check their inbox.`
+          : `Failed to send test notification: ${result.error}`;
+      }
       return "Unknown tool.";
     } catch {
       return `Error fetching ${name}.`;
     }
   }
 
-  // Agentic loop: handle tool use before streaming the final response
+  // Agentic loop: resolve tool calls, then stream the final response token-by-token.
   const apiMessages: Anthropic.Messages.MessageParam[] = messages.map((m) => ({
     role: m.role,
     content: m.content,
   }));
 
-  let currentMessages = [...apiMessages];
+  const encoder = new TextEncoder();
+  const readable = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        let currentMessages = [...apiMessages];
+        let totalInput = 0, totalOutput = 0, totalCacheRead = 0;
 
-  for (let i = 0; i < 3; i++) {
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2048,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "medium" },
-      system: [systemBlock],
-      messages: currentMessages,
-      tools: TOOLS,
-      tool_choice: { type: "auto" },
-    });
+        for (let i = 0; i < 3; i++) {
+          const stream = client.messages.stream({
+            model: "claude-sonnet-4-6",
+            max_tokens: 8192,
+            thinking: { type: "adaptive" },
+            output_config: { effort: "medium" },
+            system: [systemBlock],
+            messages: currentMessages,
+            tools: TOOLS,
+            tool_choice: { type: "auto" },
+          });
 
-    if (response.stop_reason !== "tool_use") {
-      const finalText = response.content
-        .filter((b): b is Anthropic.Messages.TextBlock => b.type === "text")
-        .map((b) => b.text)
-        .join("");
+          // Forward visible text to the client as it is generated.
+          stream.on("text", (text) => {
+            controller.enqueue(encoder.encode(text));
+          });
 
-      const encoder = new TextEncoder();
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(encoder.encode(finalText));
+          const response = await stream.finalMessage();
+          const u = response.usage as unknown as Record<string, number>;
+          totalInput     += u.input_tokens             ?? 0;
+          totalOutput    += u.output_tokens            ?? 0;
+          totalCacheRead += u.cache_read_input_tokens  ?? 0;
+
+          if (response.stop_reason !== "tool_use") {
+            controller.enqueue(encoder.encode(`\x1EUSAGE:{"i":${totalInput},"o":${totalOutput},"c":${totalCacheRead}}\x1E`));
             controller.close();
-          },
-        }),
-        { headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" } }
-      );
-    }
+            return;
+          }
 
-    // Execute all requested tools in parallel
-    const toolUseBlocks = response.content.filter(
-      (b): b is Anthropic.Messages.ToolUseBlock => b.type === "tool_use"
-    );
+          // Execute all requested tools in parallel.
+          const toolUseBlocks = response.content.filter(
+            (b): b is Anthropic.Messages.ToolUseBlock => b.type === "tool_use"
+          );
 
-    const toolResults: Anthropic.Messages.ToolResultBlockParam[] = await Promise.all(
-      toolUseBlocks.map(async (tb) => ({
-        type: "tool_result" as const,
-        tool_use_id: tb.id,
-        content: await executeTool(tb.name, tb.input as Record<string, unknown>),
-      }))
-    );
+          const toolResults: Anthropic.Messages.ToolResultBlockParam[] = await Promise.all(
+            toolUseBlocks.map(async (tb) => ({
+              type: "tool_result" as const,
+              tool_use_id: tb.id,
+              content: await executeTool(tb.name, tb.input as Record<string, unknown>),
+            }))
+          );
 
-    // Include full response content (thinking + tool_use blocks) in history
-    currentMessages = [
-      ...currentMessages,
-      { role: "assistant" as const, content: response.content },
-      { role: "user" as const, content: toolResults },
-    ];
-  }
+          // Include full response content (thinking + tool_use blocks) in history.
+          currentMessages = [
+            ...currentMessages,
+            { role: "assistant" as const, content: response.content },
+            { role: "user" as const, content: toolResults },
+          ];
+        }
 
-  return Response.json({ error: "Tool iteration limit reached." }, { status: 500 });
+        controller.enqueue(encoder.encode(`\x1EUSAGE:{"i":${totalInput},"o":${totalOutput},"c":${totalCacheRead}}\x1E`));
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
+
+  return new Response(readable, {
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
+  });
 }

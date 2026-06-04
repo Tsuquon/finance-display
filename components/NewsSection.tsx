@@ -20,17 +20,18 @@ function timeAgo(iso: string) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export default function NewsSection({ ticker }: { ticker: string }) {
+export default function NewsSection({ ticker, name }: { ticker: string; name?: string }) {
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/news/${ticker}`)
+    const qs = name ? `?name=${encodeURIComponent(name)}` : "";
+    fetch(`/api/news/${ticker}${qs}`)
       .then((r) => r.json())
       .then((data) => { setNews(data); setLoading(false); })
       .catch(() => setLoading(false));
-  }, [ticker]);
+  }, [ticker, name]);
 
   return (
     <div className="rounded-xl border border-gray-700/50 bg-gray-800/40 p-4">

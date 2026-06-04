@@ -10,8 +10,19 @@ interface Props {
   sortScore?: number;
   sortLabel?: string;
   sortScoreMax?: number;
+  sortDisplay?: string;
   onClick: () => void;
   onRemove?: () => void;
+}
+
+// Neutral badge for metric sorts (P/E, volume, dividend, market cap) where the
+// value isn't a 0–max quality score and shouldn't be color-graded.
+function MetricBadge({ text }: { text: string }) {
+  return (
+    <span className="rounded px-1.5 py-0.5 text-[10px] font-mono font-bold tabular-nums border border-gray-700/60 bg-gray-800/60 text-gray-300 whitespace-nowrap">
+      {text}
+    </span>
+  );
 }
 
 function ScoreBadge({ score, label, max = 10 }: { score: number; label?: string; max?: number }) {
@@ -28,7 +39,7 @@ function ScoreBadge({ score, label, max = 10 }: { score: number; label?: string;
   );
 }
 
-export default function CompanyCard({ company, selected, compact, sortScore, sortLabel, sortScoreMax, onClick, onRemove }: Props) {
+export default function CompanyCard({ company, selected, compact, sortScore, sortLabel, sortScoreMax, sortDisplay, onClick, onRemove }: Props) {
   const cat = cats[company.category];
 
   if (compact) {
@@ -62,6 +73,7 @@ export default function CompanyCard({ company, selected, compact, sortScore, sor
         <span className="truncate text-xs text-gray-300 leading-none">{company.name}</span>
         <span className="ml-auto shrink-0 text-[10px] font-mono text-gray-700">{company.industry}</span>
         {sortScore !== undefined && <ScoreBadge score={sortScore} label={sortLabel} max={sortScoreMax} />}
+        {sortDisplay !== undefined && <MetricBadge text={sortDisplay} />}
       </div>
     );
   }
@@ -103,6 +115,7 @@ export default function CompanyCard({ company, selected, compact, sortScore, sor
           </span>
           <div className="flex items-center gap-1.5 shrink-0">
             {sortScore !== undefined && <ScoreBadge score={sortScore} label={sortLabel} max={sortScoreMax} />}
+            {sortDisplay !== undefined && <MetricBadge text={sortDisplay} />}
             <span
               className="font-mono font-bold text-[11px] px-2 py-1 rounded-md leading-none"
               style={{

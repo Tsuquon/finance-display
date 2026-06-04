@@ -4,6 +4,7 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Company } from "@/types";
 import { readStream } from "@/lib/streaming";
+import { reportTokens } from "@/lib/tokenUsage";
 
 interface Props {
   company: Company;
@@ -25,7 +26,7 @@ export default function AIAnalysis({ company }: Props) {
         body: JSON.stringify({ company }),
       });
       if (!res.ok) throw new Error("Request failed");
-      await readStream(res, (chunk) => setAnalysis((prev) => prev + chunk));
+      await readStream(res, (chunk) => setAnalysis((prev) => prev + chunk), (i, o, c) => reportTokens(i, o, c));
       setDone(true);
     } catch {
       setAnalysis("Unable to load analysis. Check ANTHROPIC_API_KEY.");

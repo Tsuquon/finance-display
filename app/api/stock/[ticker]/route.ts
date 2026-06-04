@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import YFDefault from "yahoo-finance2";
-import type { TimeRange, CategoryKey, StockDataPoint } from "@/types";
-import { DEMO_MODE } from "@/lib/ibkr";
+import type { TimeRange, StockDataPoint } from "@/types";
 
 type Quote = { date: Date | string; close: number | null; volume: number | null };
 type ChartResult = { quotes: Quote[] };
@@ -43,13 +42,9 @@ export async function GET(
 ) {
   const { ticker } = await params;
   const range = (req.nextUrl.searchParams.get("range") ?? "1M") as TimeRange;
-  const category = (req.nextUrl.searchParams.get("category") ?? "stable") as CategoryKey;
 
-  if (process.env.NODE_ENV !== "production" && !DEMO_MODE) {
-    const { generateMockData } = await import("@/lib/mockData");
-    return NextResponse.json({ data: generateMockData(ticker, range, category) });
-  }
-
+  // Always pull live prices from Yahoo (native currency per listing, e.g. AUD
+  // for ".AX" tickers) so the chart reflects real, updating market data.
   try {
     let opts: Record<string, unknown>;
     if (range === "1H") {

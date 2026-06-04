@@ -18,11 +18,20 @@ export interface EngineDecision {
   note?: string;
 }
 
+import type { Objective } from "@/lib/strategyTrainer";
+
 export interface EngineConfig {
   maxTrades:   number;  // 1–20
   intervalSec: number;  // eval interval in seconds
   poolTotal:   number;  // initial pool size ($)
   reinvestPct: number;  // 0–100: % of each profit to put back in pool
+
+  // ── Auto-pilot: the continuous train→execute loop ──────────────────────────
+  autoRetrain:        boolean;   // periodically retrain the deployed strategy
+  retrainHours:       number;    // retrain cadence in hours
+  objective:          Objective; // what each retrain optimizes
+  trainWindowMonths:  number;    // rolling lookback each retrain trains on
+  promoteOnlyIfBetter: boolean;  // walk-forward gate: adopt only if out-of-sample holds up
 }
 
 export interface PnLSnapshot {
@@ -30,6 +39,7 @@ export interface PnLSnapshot {
   poolValue:  number;  // poolCash + cost basis of open positions
   unrealized: number;  // sum of open position mark-to-market P&L
   personal:   number;  // cumulative personal profit withdrawn to date
+  realized?:  number;  // tracked cumulative realized P&L at this instant
 }
 
 export interface EngineState {
@@ -40,19 +50,27 @@ export interface EngineState {
   poolCash:       number;  // undeployed cash in pool
   personalProfit: number;  // cumulative profit withdrawn from pool
   realizedPnl:    number;  // cumulative realized gain/loss across all closed trades
+  initialCapital: number;  // capital at the start of the current run — the fixed P&L baseline
 }
 
 const KEY = "trading_engine_v1";
 
+export const DEFAULT_CONFIG: EngineConfig = {
+  maxTrades: 5, intervalSec: 60, poolTotal: 10_000, reinvestPct: 50,
+  autoRetrain: false, retrainHours: 24, objective: "sharpe",
+  trainWindowMonths: 12, promoteOnlyIfBetter: true,
+};
+
 function defaultState(): EngineState {
   return {
-    config:         { maxTrades: 5, intervalSec: 60, poolTotal: 10_000, reinvestPct: 50 },
+    config:         { ...DEFAULT_CONFIG },
     positions:      [],
     decisions:      [],
     pnlHistory:     [],
     poolCash:       10_000,
     personalProfit: 0,
     realizedPnl:    0,
+    initialCapital: 10_000,
   };
 }
 
@@ -63,14 +81,26 @@ export function loadEngineState(): EngineState {
     if (!raw) return defaultState();
     const saved = JSON.parse(raw) as Partial<EngineState>;
     const def   = defaultState();
+    const positions      = saved.positions      ?? [];
+    const poolCash       = saved.poolCash       ?? saved.config?.poolTotal ?? def.config.poolTotal;
+    const personalProfit = saved.personalProfit ?? 0;
+    const realizedPnl    = saved.realizedPnl    ?? 0;
+    // Back-fill initialCapital for states saved before this field existed.
+    // Starting capital = current book value of the pool (cash + cost basis)
+    // + profit already withdrawn − realized gains. This recovers the true
+    // baseline even if config.poolTotal was edited after the run began.
+    const costBasis      = positions.reduce((s, p) => s + p.dollarInvested, 0);
+    const initialCapital = saved.initialCapital ??
+      parseFloat((poolCash + costBasis + personalProfit - realizedPnl).toFixed(2));
     return {
       config:         { ...def.config, ...(saved.config ?? {}) },
-      positions:      saved.positions      ?? [],
+      positions,
       decisions:      saved.decisions      ?? [],
       pnlHistory:     saved.pnlHistory     ?? [],
-      poolCash:       saved.poolCash       ?? saved.config?.poolTotal ?? def.config.poolTotal,
-      personalProfit: saved.personalProfit ?? 0,
-      realizedPnl:    saved.realizedPnl    ?? 0,
+      poolCash,
+      personalProfit,
+      realizedPnl,
+      initialCapital,
     };
   } catch {
     return defaultState();

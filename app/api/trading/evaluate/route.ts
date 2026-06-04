@@ -11,6 +11,8 @@ export interface EvalPosition {
   currentPrice: number;
   pnlPct:      number;
   holdMinutes: number;
+  signal?:     string;  // current technical signal of the held name
+  score?:      number;  // current composite score of the held name
 }
 
 export interface EvalCandidate {
@@ -49,6 +51,18 @@ Buy criteria:
 - Prioritise highest composite score
 - Do not buy if market looks broadly overbought
 
+Adding to a winner (scaling in):
+- You MAY return a "buy" for a ticker that is ALREADY in positions to add to it.
+- Only add when the held name still has a strong-buy/buy signal and a healthy composite
+  score, momentum is intact, and it is not already your largest, over-extended position.
+- An add tops the position up by roughly one position's worth of cash, so don't add to
+  the same name every tick — add when conviction genuinely strengthens.
+
+If a "strategy" object is present, it is a trained target portfolio (tickers + target
+weights) the desk wants to converge toward. Prefer buying its target tickers and prefer
+selling held positions that are NOT in the target, all else equal — but a strong-sell
+signal or a breached stop/profit rule still overrides the target.
+
 Keep the portfolio active — idle cash is wasted opportunity.`;
 
 export async function POST(req: NextRequest) {
@@ -57,10 +71,12 @@ export async function POST(req: NextRequest) {
       positions,
       candidates,
       maxTrades,
+      strategy,
     }: {
       positions:  EvalPosition[];
       candidates: EvalCandidate[];
       maxTrades:  number;
+      strategy?:  { objective: string; target: { ticker: string; weight: number }[] };
     } = await req.json();
 
     const userContent = JSON.stringify({
@@ -68,6 +84,7 @@ export async function POST(req: NextRequest) {
       max_trades: maxTrades,
       positions,
       candidates: candidates.slice(0, 20),
+      ...(strategy ? { strategy } : {}),
     });
 
     const msg = await anthropic.messages.create({

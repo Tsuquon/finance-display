@@ -1,16 +1,17 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import YFDefault from "yahoo-finance2";
 import type { Company, Signal } from "@/types";
 import { normalizeIndustry } from "@/lib/normalizeIndustry";
-import { DEMO_MODE } from "@/lib/ibkr";
 import { makeSignals } from "@/lib/makeSignals";
 import { sql } from "@/lib/db";
+import { AU_UNIVERSE } from "@/lib/universeAU";
 
 const yf = new (YFDefault as any)({
   suppressNotices: ["ripHistorical", "yahooSurvey"],
 }) as {
   screener(opts: { scrIds: string; count: number }): Promise<{ quotes: unknown[] }>;
+  quote(symbols: string[]): Promise<unknown[]>;
 };
 
 const anthropic = new Anthropic();
@@ -40,23 +41,35 @@ type AIEntry = {
   signal: Signal;
 };
 
-export async function GET() {
-  if (process.env.NODE_ENV !== "production" && !DEMO_MODE) {
-    const { companies } = await import("@/data/companies");
-    return NextResponse.json(companies);
-  }
+export async function GET(req: NextRequest) {
+  const market = req.nextUrl.searchParams.get("market") === "au" ? "au" : "us";
+
+  // Always source the list from live data (Yahoo quotes + Claude enrichment,
+  // cached in Neon) so it stays current rather than serving a static snapshot.
+  const cacheId = market === "au" ? "screener-au" : "screener";
 
   // Check DB cache
-  const rows = await sql`SELECT companies, refreshed_at FROM market_screener WHERE id = 'screener'`;
+  const rows = await sql`SELECT companies, refreshed_at FROM market_screener WHERE id = ${cacheId}`;
   if (rows.length > 0) {
     const age = Date.now() - new Date(rows[0].refreshed_at as string).getTime();
     if (age < TTL) return NextResponse.json(rows[0].companies);
   }
 
-  const screener = await yf.screener({ scrIds: "most_actives", count: 75 });
-  const equities = (screener.quotes as ScreenerQuote[])
-    .filter((q) => q.quoteType === "EQUITY")
-    .slice(0, 60);
+  let equities: ScreenerQuote[];
+  if (market === "au") {
+    // Yahoo's predefined screeners are US-centric, so for the ASX we fetch live
+    // quotes for the curated AU universe and rank by market cap.
+    const quotes = (await yf.quote(AU_UNIVERSE)) as ScreenerQuote[];
+    equities = quotes
+      .filter((q) => q.quoteType === "EQUITY" && typeof q.marketCap === "number")
+      .sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0))
+      .slice(0, 120);
+  } else {
+    const screener = await yf.screener({ scrIds: "most_actives", count: 150 });
+    equities = (screener.quotes as ScreenerQuote[])
+      .filter((q) => q.quoteType === "EQUITY")
+      .slice(0, 120);
+  }
 
   const payload = equities.map((q) => ({
     ticker: q.symbol,
@@ -64,7 +77,8 @@ export async function GET() {
     marketCapB: q.marketCap ? (q.marketCap / 1e9).toFixed(1) : null,
   }));
 
-  const SYSTEM = `You are an equity analyst. Given a list of US equities, return a JSON array (no markdown, no extra text) where each element is:
+  const marketLabel = market === "au" ? "Australian (ASX-listed)" : "US";
+  const SYSTEM = `You are an equity analyst. Given a list of ${marketLabel} equities, return a JSON array (no markdown, no extra text) where each element is:
 {"ticker":"...","industry":"...","category":"future"|"stable"|"fading","reason":"one-sentence thesis (max 15 words)","signal":{"text":"qualitative insight max 10 words","type":"positive"|"negative"|"neutral","source":"publication or source max 4 words"}}
 
 Rules:
@@ -74,7 +88,7 @@ Rules:
 
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 6000,
+    max_tokens: 16000,
     system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: JSON.stringify(payload) }],
   });
@@ -97,14 +111,22 @@ Rules:
       category: ai?.category ?? "stable",
       reason: ai?.reason ?? "",
       signals,
-      dividendYield: q.trailingAnnualDividendYield ?? undefined,
-      dividendRate: q.trailingAnnualDividendRate ?? undefined,
+      // Guard against Yahoo's occasional corrupt dividend feed (implausibly high
+      // yields); drop both fields rather than surface a fictional number.
+      dividendYield:
+        q.trailingAnnualDividendYield && q.trailingAnnualDividendYield <= 0.25
+          ? q.trailingAnnualDividendYield
+          : undefined,
+      dividendRate:
+        q.trailingAnnualDividendYield && q.trailingAnnualDividendYield <= 0.25
+          ? q.trailingAnnualDividendRate ?? undefined
+          : undefined,
     };
   });
 
   await sql`
     INSERT INTO market_screener (id, companies, refreshed_at)
-    VALUES ('screener', ${JSON.stringify(companies)}, now())
+    VALUES (${cacheId}, ${JSON.stringify(companies)}, now())
     ON CONFLICT (id) DO UPDATE SET companies = EXCLUDED.companies, refreshed_at = now()
   `;
 

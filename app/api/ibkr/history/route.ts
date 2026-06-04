@@ -31,46 +31,60 @@ export async function POST(req: Request) {
     const startDate = new Date(investedAt);
     const endDate   = new Date();
 
+    const diffDays = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24);
+    // Use hourly bars for short windows so the chart has enough resolution
+    const interval = diffDays <= 7 ? "1h" : "1d";
+
     const histories = await Promise.all(
       positions.map(async (pos) => {
         try {
           const result = await yf.chart(pos.ticker, {
             period1: startDate,
             period2: endDate,
-            interval: "1d",
+            interval,
           });
           const quotes = (result?.quotes ?? [])
-            .filter((q) => q.close != null)
+            .filter((q) => q.close != null && new Date(q.date) >= startDate)
             .map((q) => ({
-              date: new Date(q.date).toISOString().slice(0, 10),
+              date: interval === "1h"
+                ? new Date(q.date).toISOString().slice(0, 13)
+                : new Date(q.date).toISOString().slice(0, 10),
               close: q.close as number,
             }));
-          return { shares: pos.shares, quotes };
+          return { shares: pos.shares, avgCost: pos.avgCost, quotes };
         } catch {
-          return { shares: pos.shares, quotes: [] };
+          return { shares: pos.shares, avgCost: pos.avgCost, quotes: [] };
         }
       })
     );
 
-    const dateMap: Record<string, number> = {};
-    for (const { shares, quotes } of histories) {
-      for (const { date, close } of quotes) {
-        dateMap[date] = (dateMap[date] ?? 0) + shares * close;
-      }
+    // Collect every date that appears across any position
+    const allDates = new Set<string>();
+    for (const h of histories) {
+      for (const q of h.quotes) allDates.add(q.date);
     }
+    const sortedDates = [...allDates].sort();
 
-    const points: DataPoint[] = Object.entries(dateMap)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, value]) => {
-        const pnl    = value - totalCostBasis;
-        const pnlPct = totalCostBasis > 0 ? (pnl / totalCostBasis) * 100 : 0;
-        return {
-          date,
-          value:   parseFloat(value.toFixed(2)),
-          pnl:     parseFloat(pnl.toFixed(2)),
-          pnlPct:  parseFloat(pnlPct.toFixed(2)),
-        };
-      });
+    // Forward-fill each position's price so every slot reflects the full portfolio.
+    // Positions with no bar yet fall back to avgCost (purchase price → P&L = 0).
+    const lastPrice = histories.map((h) => h.avgCost);
+
+    const points: DataPoint[] = sortedDates.map((date) => {
+      let value = 0;
+      for (let i = 0; i < histories.length; i++) {
+        const bar = histories[i].quotes.find((q) => q.date === date);
+        if (bar) lastPrice[i] = bar.close;
+        value += histories[i].shares * lastPrice[i];
+      }
+      const pnl    = value - totalCostBasis;
+      const pnlPct = totalCostBasis > 0 ? (pnl / totalCostBasis) * 100 : 0;
+      return {
+        date,
+        value:   parseFloat(value.toFixed(2)),
+        pnl:     parseFloat(pnl.toFixed(2)),
+        pnlPct:  parseFloat(pnlPct.toFixed(2)),
+      };
+    });
 
     return NextResponse.json({ points, totalCostBasis });
   } catch (err) {

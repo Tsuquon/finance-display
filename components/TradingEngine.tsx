@@ -18,15 +18,26 @@ import {
   persistEngineState,
   tradeAllocation,
   applySell,
+  DEFAULT_CONFIG,
   type EngineConfig,
   type EngineDecision,
   type EnginePosition,
   type EngineState,
   type PnLSnapshot,
 } from "@/lib/tradingEngine";
+import {
+  loadActiveStrategy,
+  saveActiveStrategy,
+  loadRetrainLog,
+  appendRetrainEvent,
+  shouldPromote,
+  type ActiveStrategy,
+  type RetrainEvent,
+} from "@/lib/activeStrategy";
 import type { Company } from "@/types";
 import type { TechnicalResult } from "@/lib/technicalAnalysis";
 import type { EvalCandidate, EvalPosition, EvalResult } from "@/app/api/trading/evaluate/route";
+import { reportTokens } from "@/lib/tokenUsage";
 
 const StockPanel = dynamic(() => import("./StockPanel"), { ssr: false });
 
@@ -100,11 +111,11 @@ function PositionCard({ pos, onClick }: { pos: EnginePosition; onClick?: () => v
 // ── Config row ────────────────────────────────────────────────────────────────
 
 function ConfigRow({
-  label, value, onChange, prefix, suffix, min, max, step, logScale,
+  label, value, onChange, prefix, suffix, min, max, step, logScale, disabled,
 }: {
   label: string; value: number; onChange: (v: number) => void;
   prefix?: string; suffix?: string; min: number; max: number; step?: number;
-  logScale?: boolean;
+  logScale?: boolean; disabled?: boolean;
 }) {
   const [text, setText] = useState(String(value));
   useEffect(() => { setText(String(value)); }, [value]);
@@ -142,20 +153,21 @@ function ConfigRow({
   const fillPct = (toSlider(value) / SLIDER_MAX) * 100;
 
   return (
-    <div className="space-y-2">
+    <div className={`space-y-2 ${disabled ? "opacity-50" : ""}`}>
       <div className="flex items-center justify-between gap-4">
         <span className="text-xs text-gray-500 shrink-0">{label}</span>
         <div className="flex items-center gap-1">
           {prefix && <span className="text-xs text-gray-600">{prefix}</span>}
           <input
             type="number" value={text} min={min} max={max} step={step ?? 1}
+            disabled={disabled}
             onChange={(e) => {
               setText(e.target.value);
               const v = parseFloat(e.target.value);
               if (!isNaN(v)) onChange(Math.max(min, Math.min(max, v)));
             }}
             onBlur={(e) => commit(e.target.value)}
-            className="w-24 rounded-lg border border-gray-700 bg-gray-900 px-2 py-1 text-xs font-mono text-white text-right focus:border-indigo-500 focus:outline-none"
+            className="w-24 rounded-lg border border-gray-700 bg-gray-900 px-2 py-1 text-xs font-mono text-white text-right focus:border-indigo-500 focus:outline-none disabled:cursor-not-allowed"
           />
           {suffix && <span className="text-xs text-gray-600">{suffix}</span>}
         </div>
@@ -164,29 +176,111 @@ function ConfigRow({
         type="range"
         min={0} max={SLIDER_MAX} step={1}
         value={toSlider(value)}
+        disabled={disabled}
         onChange={(e) => onChange(fromSlider(parseFloat(e.target.value)))}
         style={{
           background: `linear-gradient(to right, #6366f1 0%, #6366f1 ${fillPct}%, #1f2937 ${fillPct}%, #1f2937 100%)`,
         }}
-        className="w-full h-1.5 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-indigo-400 [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-indigo-400 [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:cursor-pointer"
+        className="w-full h-1.5 rounded-full appearance-none cursor-pointer disabled:cursor-not-allowed [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-indigo-400 [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-indigo-400 [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:cursor-pointer"
       />
+    </div>
+  );
+}
+
+// ── Config building blocks ──────────────────────────────────────────────────
+
+/** A titled, bordered group of settings with an optional "locked" badge. */
+function Section({
+  title, caption, icon, locked, children,
+}: {
+  title: string; caption?: string; icon?: React.ReactNode; locked?: boolean; children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-gray-800 bg-gray-900/40 overflow-hidden">
+      <div className="flex items-center justify-between gap-3 border-b border-gray-800/80 bg-gray-900/60 px-4 py-2.5">
+        <div className="flex items-center gap-2 min-w-0">
+          {icon && <span className="text-gray-500 shrink-0">{icon}</span>}
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-gray-200">{title}</p>
+            {caption && <p className="text-[10px] text-gray-600 mt-0.5 truncate">{caption}</p>}
+          </div>
+        </div>
+        {locked && (
+          <span className="flex items-center gap-1 rounded-full bg-amber-950/40 border border-amber-900/40 px-2 py-0.5 text-[9px] font-medium text-amber-500/90 shrink-0">
+            <svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" />
+            </svg>
+            Locked
+          </span>
+        )}
+      </div>
+      <div className="px-4 py-3.5 space-y-3.5">{children}</div>
+    </div>
+  );
+}
+
+/** Label + description + iOS-style switch. */
+function Toggle({
+  label, description, checked, onChange, accent = "emerald",
+}: {
+  label: string; description?: string; checked: boolean; onChange: (v: boolean) => void;
+  accent?: "emerald" | "indigo";
+}) {
+  const on = accent === "indigo" ? "bg-indigo-600" : "bg-emerald-600";
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <p className="text-xs text-gray-300">{label}</p>
+        {description && <p className="text-[10px] text-gray-600 mt-0.5 leading-relaxed">{description}</p>}
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange(!checked)}
+        aria-pressed={checked}
+        className={`relative h-5 w-9 shrink-0 rounded-full transition-colors mt-0.5 ${checked ? on : "bg-gray-700"}`}
+      >
+        <span className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-4" : "translate-x-0"}`} />
+      </button>
+    </div>
+  );
+}
+
+/** Label + dropdown, matching ConfigRow's spacing. */
+function SelectRow<T extends string>({
+  label, value, onChange, options, disabled,
+}: {
+  label: string; value: T; onChange: (v: T) => void;
+  options: { value: T; label: string }[]; disabled?: boolean;
+}) {
+  return (
+    <div className={`flex items-center justify-between gap-4 ${disabled ? "opacity-50" : ""}`}>
+      <span className="text-xs text-gray-500 shrink-0">{label}</span>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value as T)}
+        className="rounded-lg border border-gray-700 bg-gray-900 px-2.5 py-1.5 text-xs text-white focus:border-indigo-500 focus:outline-none disabled:cursor-not-allowed"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
     </div>
   );
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function TradingEngine() {
+export default function TradingEngine({ open = true }: { open?: boolean }) {
   // Persisted
   const [positions,      setPositions]      = useState<EnginePosition[]>([]);
   const [decisions,      setDecisions]      = useState<EngineDecision[]>([]);
   const [pnlHistory,     setPnlHistory]     = useState<PnLSnapshot[]>([]);
-  const [config,         setConfig]         = useState<EngineConfig>({
-    maxTrades: 5, intervalSec: 60, poolTotal: 10_000, reinvestPct: 50,
-  });
+  const [config,         setConfig]         = useState<EngineConfig>({ ...DEFAULT_CONFIG });
   const [poolCash,       setPoolCash]       = useState(10_000);
   const [personalProfit, setPersonalProfit] = useState(0);
   const [realizedPnl,    setRealizedPnl]    = useState(0);
+  const [initialCapital, setInitialCapital] = useState(10_000);
 
   // Runtime
   const [isRunning,    setIsRunning]    = useState(false);
@@ -203,6 +297,13 @@ export default function TradingEngine() {
   const [tokenUsage,   setTokenUsage]   = useState({ input: 0, output: 0, cacheRead: 0, ticks: 0 });
   const [tokenHistory, setTokenHistory] = useState<Array<{ tick: number; input: number; output: number; cacheRead: number; costUsd: number }>>([]);
   const [tokensOpen,   setTokensOpen]   = useState(false);
+
+  // ── Auto-pilot: the deployed strategy + continuous retraining ──────────────
+  const [strategy,      setStrategy]      = useState<ActiveStrategy | null>(null);
+  const [retrainLog,    setRetrainLog]    = useState<RetrainEvent[]>([]);
+  const [retrainStatus, setRetrainStatus] = useState<"idle" | "training">("idle");
+  const [lastRetrainAt, setLastRetrainAt] = useState(0);
+  const [autopilotOpen, setAutopilotOpen] = useState(false);
 
   useEffect(() => {
     if (panelCompany) requestAnimationFrame(() => setPanelVisible(true));
@@ -237,6 +338,11 @@ export default function TradingEngine() {
   const poolCashRef    = useRef(poolCash);
   const persRef        = useRef(personalProfit);
   const realizedRef    = useRef(realizedPnl);
+  const initCapRef     = useRef(initialCapital);
+  const tickBusyRef    = useRef(false);  // guards against overlapping async ticks
+  const stratRef       = useRef(strategy);
+  const retrainBusyRef = useRef(false);  // guards against overlapping retrains
+  stratRef.current       = strategy;
   posRef.current         = positions;
   decRef.current         = decisions;
   cfgRef.current         = config;
@@ -246,6 +352,7 @@ export default function TradingEngine() {
   poolCashRef.current    = poolCash;
   persRef.current        = personalProfit;
   realizedRef.current    = realizedPnl;
+  initCapRef.current     = initialCapital;
 
   // ── Load persisted state ────────────────────────────────────────────────
   useEffect(() => {
@@ -257,19 +364,43 @@ export default function TradingEngine() {
     setPoolCash(s.poolCash);
     setPersonalProfit(s.personalProfit);
     setRealizedPnl(s.realizedPnl ?? 0);
+    setInitialCapital(s.initialCapital);
+  }, []);
+
+  // ── Load the deployed strategy + retrain log; re-read when it changes ──────
+  // The trainer's "Deploy to Auto-Pilot" (and our own scheduler) dispatch
+  // "active-strategy-changed"; the "storage" event covers other tabs.
+  useEffect(() => {
+    const sync = () => {
+      setStrategy(loadActiveStrategy());
+      setRetrainLog(loadRetrainLog());
+    };
+    sync();
+    window.addEventListener("active-strategy-changed", sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener("active-strategy-changed", sync);
+      window.removeEventListener("storage", sync);
+    };
   }, []);
 
   // ── Persist on change ───────────────────────────────────────────────────
   useEffect(() => {
-    const state: EngineState = { config, positions, decisions, pnlHistory, poolCash, personalProfit, realizedPnl };
+    const state: EngineState = { config, positions, decisions, pnlHistory, poolCash, personalProfit, realizedPnl, initialCapital };
     persistEngineState(state);
-  }, [config, positions, decisions, pnlHistory, poolCash, personalProfit]);
+  }, [config, positions, decisions, pnlHistory, poolCash, personalProfit, realizedPnl, initialCapital]);
 
   // ── 1s ticker for countdown ─────────────────────────────────────────────
+  // Only runs while the drawer is open. The tick exists solely to update the
+  // visible "next tick in Xs" countdown, so re-rendering this large tree every
+  // second while closed was pure waste (and steady GC pressure). The trading /
+  // retrain loops are independent and keep running regardless.
   useEffect(() => {
+    if (!open) return;
+    setNowMs(Date.now());
     const id = setInterval(() => setNowMs(Date.now()), 1_000);
     return () => clearInterval(id);
-  }, []);
+  }, [open]);
 
   // ── Load universe ───────────────────────────────────────────────────────
   const loadUniverse = useCallback(async () => {
@@ -315,9 +446,19 @@ export default function TradingEngine() {
   }, []);
 
   // ── Build candidates ────────────────────────────────────────────────────
+  // When a strategy is deployed to auto-pilot, its continuously-retrained target
+  // selection drives what the engine considers: target tickers (that we don't
+  // already hold) are surfaced first, ordered by their learned target weight, so
+  // the live engine trades *toward* the trained strategy. Non-target names still
+  // appear after, ranked by the composite, so the engine isn't blind to the rest
+  // of the universe. With no strategy deployed, this is the original composite rank.
   function buildCandidates(): EvalCandidate[] {
     const held = new Set(posRef.current.map((p) => p.ticker));
-    return coRef.current
+    const targetWeight = new Map(
+      (stratRef.current?.target ?? []).map((t) => [t.ticker, t.weight])
+    );
+
+    const rows = coRef.current
       .filter((c) => !held.has(c.ticker) && scRef.current[c.ticker])
       .map((c) => {
         const s    = scRef.current[c.ticker]!;
@@ -334,10 +475,19 @@ export default function TradingEngine() {
           score: composite,
           change30d: tech?.change30d,
           rsi,
+          _target: targetWeight.get(c.ticker) ?? -1, // ≥0 means it's in the strategy target
         };
-      })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 20);
+      });
+
+    rows.sort((a, b) => {
+      // Strategy-target names first (by learned weight), then everything else by composite.
+      if (a._target >= 0 || b._target >= 0) {
+        if (a._target !== b._target) return b._target - a._target;
+      }
+      return b.score - a.score;
+    });
+
+    return rows.slice(0, 20).map(({ _target, ...c }) => { void _target; return c; });
   }
 
   // ── Engine tick ─────────────────────────────────────────────────────────
@@ -374,32 +524,54 @@ export default function TradingEngine() {
       } catch { /* stale prices */ }
     }
 
-    // 2. Ensure technicals for top candidates
-    await ensureTechnicals(buildCandidates().slice(0, 15).map((c) => c.ticker));
+    // 2. Ensure technicals for top candidates AND held names (so the eval can judge
+    //    whether to add to a position, not just whether to open new ones).
+    await ensureTechnicals([
+      ...buildCandidates().slice(0, 15).map((c) => c.ticker),
+      ...posRef.current.map((p) => p.ticker),
+    ]);
 
     // 3. Build eval inputs
-    const evalPos: EvalPosition[] = posRef.current.map((p) => ({
-      ticker:       p.ticker,
-      name:         p.name,
-      shares:       p.shares,
-      buyPrice:     p.buyPrice,
-      currentPrice: priceMap[p.ticker]?.currentPrice ?? p.currentPrice,
-      pnlPct:       priceMap[p.ticker]?.pnlPct ??
-                    (p.buyPrice > 0 ? ((p.currentPrice - p.buyPrice) / p.buyPrice) * 100 : 0),
-      holdMinutes:  Math.round((Date.now() - p.buyAt) / 60_000),
-    }));
+    const evalPos: EvalPosition[] = posRef.current.map((p) => {
+      const sc   = scRef.current[p.ticker];
+      const tech = tcRef.current[p.ticker];
+      const score = sc
+        ? Math.round(0.6 * ((sc.st + sc.lt) / 20) * 100 + 0.4 * (tech?.score ?? 50))
+        : undefined;
+      return {
+        ticker:       p.ticker,
+        name:         p.name,
+        shares:       p.shares,
+        buyPrice:     p.buyPrice,
+        currentPrice: priceMap[p.ticker]?.currentPrice ?? p.currentPrice,
+        pnlPct:       priceMap[p.ticker]?.pnlPct ??
+                      (p.buyPrice > 0 ? ((p.currentPrice - p.buyPrice) / p.buyPrice) * 100 : 0),
+        holdMinutes:  Math.round((Date.now() - p.buyAt) / 60_000),
+        signal:       tech?.signal,
+        score,
+      };
+    });
     const candidates = buildCandidates();
 
     // 4. Ask Claude
     let evalResult: EvalResult = { sells: [], buys: [] };
     try {
+      const strat = stratRef.current;
       evalResult = await fetch("/api/trading/evaluate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ positions: evalPos, candidates, maxTrades: cfg.maxTrades }),
+        body: JSON.stringify({
+          positions: evalPos,
+          candidates,
+          maxTrades: cfg.maxTrades,
+          strategy: strat
+            ? { objective: strat.objective, target: strat.target.map((t) => ({ ticker: t.ticker, weight: t.weight })) }
+            : undefined,
+        }),
       }).then((r) => r.json());
       if (evalResult.usage) {
         const u = evalResult.usage;
+        reportTokens(u.inputTokens, u.outputTokens, u.cacheReadTokens);
         setTokenUsage((prev) => ({
           input:     prev.input     + u.inputTokens,
           output:    prev.output    + u.outputTokens,
@@ -445,6 +617,12 @@ export default function TradingEngine() {
           cash, pos.dollarInvested, proceeds, cfg.reinvestPct
         );
 
+        // Remove the position FIRST, then credit the pool. Doing the removal
+        // up front makes the sale atomic: nothing below can throw and leave the
+        // proceeds credited to cash while the position is still counted as
+        // deployed (which would double-count its value in book/current value).
+        mutPos((prev) => prev.filter((p) => p.ticker !== sell.ticker));
+
         cash = newCash;
         setPoolCash(newCash);
         poolCashRef.current = newCash;
@@ -457,20 +635,37 @@ export default function TradingEngine() {
         }
 
         decision.sells.push({ ticker: sell.ticker, reason: sell.reason, pnlPct, reinvested, withdrawn });
-        mutPos((prev) => prev.filter((p) => p.ticker !== sell.ticker));
       } catch { /* keep position */ }
     }
 
-    // 6. Execute buys — allocate equally from available pool
-    const slotsAfterSells = cfg.maxTrades - posRef.current.length;
-    const toBuy = (evalResult.buys ?? [])
+    // 6. Execute buys — two kinds:
+    //    • open  → a ticker we don't hold; consumes one of the maxTrades slots,
+    //              sized to an equal share of remaining pool cash (original logic).
+    //    • add   → a ticker we already hold; Claude wants to scale into a winner.
+    //              Does NOT consume a slot; tops up by one slot's worth of the pool
+    //              (capped by cash) and MERGES into the existing position (weighted
+    //              avg cost) rather than opening a duplicate. Merging keeps the cash
+    //              -conservation invariant intact: cash falls and cost basis rises by
+    //              the same filled amount, so book value is unchanged.
+    const seen = new Set<string>();
+    const deduped = (evalResult.buys ?? []).filter((b) => {
+      if (seen.has(b.ticker)) return false;
+      seen.add(b.ticker);
+      return true;
+    });
+    const opens = deduped
       .filter((b) => !posRef.current.find((p) => p.ticker === b.ticker))
-      .slice(0, Math.max(0, slotsAfterSells));
+      .slice(0, Math.max(0, cfg.maxTrades - posRef.current.length));
+    const adds = deduped.filter((b) => posRef.current.find((p) => p.ticker === b.ticker));
+    const slotSize = Math.round(cfg.poolTotal / Math.max(1, cfg.maxTrades)); // one position's worth
 
-    for (const buy of toBuy) {
-      const slots     = Math.max(1, cfg.maxTrades - posRef.current.length);
-      const allocated = tradeAllocation(cash, slots);
-      if (allocated < 10) break; // pool too depleted
+    // Opens first so slot-based sizing sees an accurate held count, then adds.
+    for (const buy of [...opens, ...adds]) {
+      const isAdd     = !!posRef.current.find((p) => p.ticker === buy.ticker);
+      const allocated = isAdd
+        ? Math.min(cash, slotSize)
+        : tradeAllocation(cash, Math.max(1, cfg.maxTrades - posRef.current.length));
+      if (allocated < 10) continue; // not enough cash for this buy — skip it
 
       const company = coRef.current.find((c) => c.ticker === buy.ticker);
       const name    = company?.name ?? buy.ticker;
@@ -498,25 +693,39 @@ export default function TradingEngine() {
         const result = exec.results?.[0];
         if (!result || result.error) continue;
 
-        const newPos: EnginePosition = {
-          ticker:        buy.ticker,
-          name,
-          conid:         order.conid ?? 0,
-          shares:        result.shares,
-          buyPrice:      result.price,
-          currentPrice:  result.price,
-          dollarInvested: parseFloat((result.shares * result.price).toFixed(2)),
-          buyAt:         Date.now(),
-          accountId:     preview.accountId,
-          orderId:       result.orderId,
-        };
-
-        cash = parseFloat((cash - newPos.dollarInvested).toFixed(2));
+        const filledCost = parseFloat((result.shares * result.price).toFixed(2));
+        cash = parseFloat((cash - filledCost).toFixed(2));
         setPoolCash(cash);
         poolCashRef.current = cash;
 
-        decision.buys.push({ ticker: buy.ticker, reason: buy.reason, allocated });
-        mutPos((prev) => [...prev, newPos]);
+        if (isAdd) {
+          // Merge into the held position with a fresh weighted-average cost basis.
+          mutPos((prev) =>
+            prev.map((p) => {
+              if (p.ticker !== buy.ticker) return p;
+              const newShares   = parseFloat((p.shares + result.shares).toFixed(6));
+              const newInvested = parseFloat((p.dollarInvested + filledCost).toFixed(2));
+              const newAvg      = newShares > 0 ? parseFloat((newInvested / newShares).toFixed(4)) : p.buyPrice;
+              return { ...p, shares: newShares, dollarInvested: newInvested, buyPrice: newAvg, currentPrice: result.price };
+            })
+          );
+          decision.buys.push({ ticker: buy.ticker, reason: `added — ${buy.reason}`, allocated: filledCost });
+        } else {
+          const newPos: EnginePosition = {
+            ticker:        buy.ticker,
+            name,
+            conid:         order.conid ?? 0,
+            shares:        result.shares,
+            buyPrice:      result.price,
+            currentPrice:  result.price,
+            dollarInvested: filledCost,
+            buyAt:         Date.now(),
+            accountId:     preview.accountId,
+            orderId:       result.orderId,
+          };
+          decision.buys.push({ ticker: buy.ticker, reason: buy.reason, allocated: filledCost });
+          mutPos((prev) => [...prev, newPos]);
+        }
       } catch { /* skip */ }
     }
 
@@ -527,14 +736,29 @@ export default function TradingEngine() {
     addDecision(decision);
 
     // Snapshot P&L for the history chart
+    const costBasis  = posRef.current.reduce((s, p) => s + p.dollarInvested, 0);
     const unrealized = posRef.current.reduce(
       (s, p) => s + (p.currentPrice - p.buyPrice) * p.shares, 0
     );
+    const bookValue  = poolCashRef.current + costBasis;
+
+    // Invariant: book value must equal start + realized − personal. Any drift
+    // means cash was credited/debited without a matching realized entry (e.g.
+    // a position counted as both recovered cash and still-deployed).
+    const expectedBook = initCapRef.current + realizedRef.current - persRef.current;
+    if (Math.abs(bookValue - expectedBook) > 0.05) {
+      console.warn(
+        `[TradingEngine] cash conservation drift: book $${bookValue.toFixed(2)} ` +
+        `vs expected $${expectedBook.toFixed(2)} (Δ $${(bookValue - expectedBook).toFixed(2)})`
+      );
+    }
+
     const snapshot: PnLSnapshot = {
       at:        Date.now(),
-      poolValue: poolCashRef.current + posRef.current.reduce((s, p) => s + p.dollarInvested, 0),
+      poolValue: bookValue,
       unrealized,
       personal:  persRef.current,
+      realized:  realizedRef.current,
     };
     setPnlHistory((prev) => [...prev.slice(-499), snapshot]);
 
@@ -550,8 +774,17 @@ export default function TradingEngine() {
     loadUniverse();
 
     async function run() {
-      await tickRef.current();
-      setNextTickAt(Date.now() + cfgRef.current.intervalSec * 1_000);
+      // A tick can take longer than the interval (LLM eval + many fetches). Skip
+      // this firing if the previous tick is still running — overlapping ticks
+      // race on `cash`/poolCashRef and corrupt the pool accounting.
+      if (tickBusyRef.current) return;
+      tickBusyRef.current = true;
+      try {
+        await tickRef.current();
+      } finally {
+        tickBusyRef.current = false;
+        setNextTickAt(Date.now() + cfgRef.current.intervalSec * 1_000);
+      }
     }
 
     run();
@@ -559,6 +792,103 @@ export default function TradingEngine() {
     setNextTickAt(Date.now() + config.intervalSec * 1_000);
     return () => clearInterval(id);
   }, [isRunning, config.intervalSec, loadUniverse]);
+
+  // ── Auto-pilot: retrain the deployed strategy on fresh data ───────────────
+  // Re-optimizes on the most recent `trainWindowMonths` of market data, then
+  // (walk-forward) only re-deploys if the candidate's out-of-sample score holds
+  // up vs the live strategy — so the "constantly trained" loop tracks the market
+  // without chasing overfit noise. Runs whenever this component is mounted (the
+  // engine drawer keeps it alive), independent of whether trading is started.
+  const runRetrain = useCallback(async () => {
+    if (retrainBusyRef.current) return;
+    retrainBusyRef.current = true;
+    setRetrainStatus("training");
+    try {
+      const cfg = cfgRef.current;
+      // Retrain on the same market the deployed strategy was trained on (default US).
+      // Omitting benchmark lets the retrain route pick each market's broad index.
+      const market = stratRef.current?.market ?? "US";
+      const res = await fetch("/api/backtest/retrain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          objective: cfg.objective,
+          trainWindowMonths: cfg.trainWindowMonths,
+          topN: cfg.maxTrades,
+          initialCapital: cfg.poolTotal,
+          rebalance: "monthly",
+          market,
+        }),
+      }).then((r) => r.json());
+
+      if (res.error) {
+        setRetrainStatus("idle");
+        return;
+      }
+
+      const current = stratRef.current;
+      const { promote, reason } = shouldPromote(
+        res.testScore,
+        res.baseline?.testScore ?? null,
+        current,
+        cfg.promoteOnlyIfBetter
+      );
+
+      if (promote) {
+        const next: ActiveStrategy = {
+          params: res.params,
+          objective: res.objective,
+          trainWindowMonths: res.trainWindowMonths ?? cfg.trainWindowMonths,
+          topN: res.topN,
+          target: res.selection,
+          trainScore: res.trainScore,
+          testScore: res.testScore,
+          baselineTestScore: res.baseline?.testScore ?? null,
+          asOfDate: res.asOfDate,
+          endDate: res.endDate,
+          trainedAt: Date.now(),
+          deployedAt: Date.now(),
+          source: "auto",
+          market: res.market ?? market,
+        };
+        saveActiveStrategy(next);
+        setStrategy(next);
+        stratRef.current = next;
+      }
+
+      const log = appendRetrainEvent({
+        at: Date.now(),
+        testScore: res.testScore,
+        trainScore: res.trainScore,
+        baselineTestScore: res.baseline?.testScore ?? null,
+        promoted: promote,
+        reason,
+        tickers: (res.selection ?? []).map((s: { ticker: string }) => s.ticker),
+      });
+      setRetrainLog(log);
+      setLastRetrainAt(Date.now());
+    } catch { /* transient — try again next cadence */ }
+    finally {
+      retrainBusyRef.current = false;
+      setRetrainStatus("idle");
+    }
+  }, []);
+
+  const retrainRef = useRef(runRetrain);
+  retrainRef.current = runRetrain;
+
+  // ── Retrain scheduler ─────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!config.autoRetrain) return;
+    // Catch up if it's been longer than the cadence since the last retrain.
+    const cadenceMs = config.retrainHours * 3_600_000;
+    if (Date.now() - lastRetrainAt >= cadenceMs) retrainRef.current();
+    const id = setInterval(() => retrainRef.current(), cadenceMs);
+    return () => clearInterval(id);
+    // lastRetrainAt intentionally omitted: we don't want to reset the interval on
+    // every retrain, only when the cadence/enable flag changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.autoRetrain, config.retrainHours]);
 
   // ── When poolTotal config changes, reset poolCash (only when stopped) ───
   function handlePoolTotalChange(v: number) {
@@ -607,6 +937,18 @@ export default function TradingEngine() {
           >
             Tokens
           </button>
+          <button
+            onClick={() => setAutopilotOpen((v) => !v)}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+              autopilotOpen
+                ? "border-emerald-700/60 bg-emerald-950/40 text-emerald-400"
+                : strategy
+                  ? "border-emerald-800/50 bg-gray-800 text-emerald-500 hover:text-emerald-300"
+                  : "border-gray-700 bg-gray-800 text-gray-400 hover:text-white"
+            }`}
+          >
+            Auto-Pilot{strategy ? " ●" : ""}
+          </button>
           {process.env.NODE_ENV !== "production" && (
             <button
               onClick={() => {
@@ -617,6 +959,7 @@ export default function TradingEngine() {
                 setPoolCash(cfgRef.current.poolTotal);
                 setPersonalProfit(0);
                 setRealizedPnl(0);
+                setInitialCapital(cfgRef.current.poolTotal);
                 setTokenUsage({ input: 0, output: 0, cacheRead: 0, ticks: 0 });
                 setTokenHistory([]);
               }}
@@ -626,7 +969,18 @@ export default function TradingEngine() {
             </button>
           )}
           <button
-            onClick={() => { if (!isRunning) loadUniverse(); setIsRunning((v) => !v); }}
+            onClick={() => {
+              if (!isRunning) {
+                // Capture the P&L baseline at the start of a fresh run.
+                // A run is "fresh" when there's no history yet (a Stop→Start
+                // resume keeps the existing baseline).
+                if (pnlHistory.length === 0) {
+                  setInitialCapital(parseFloat((poolCash + deployed).toFixed(2)));
+                }
+                loadUniverse();
+              }
+              setIsRunning((v) => !v);
+            }}
             disabled={initLoading}
             className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition-colors ${
               isRunning
@@ -640,46 +994,127 @@ export default function TradingEngine() {
       </div>
 
       {/* Config panel */}
-      {configOpen && (
-        <div className="rounded-xl border border-gray-800 bg-gray-900/60 px-5 py-4 space-y-3">
-          <ConfigRow
-            label="Max concurrent trades"
-            value={config.maxTrades}
-            onChange={(v) => setConfig((c) => ({ ...c, maxTrades: v }))}
-            min={1} max={20}
-          />
-          <ConfigRow
-            label="Eval interval"
-            value={config.intervalSec}
-            onChange={(v) => setConfig((c) => ({ ...c, intervalSec: v }))}
-            suffix="sec" min={5} max={86400} logScale
-          />
-          <div className="border-t border-gray-800 pt-3 space-y-3">
-            <ConfigRow
-              label="Capital pool"
-              value={config.poolTotal}
-              onChange={handlePoolTotalChange}
-              prefix="$" min={100} max={10_000_000} step={100} logScale
-            />
-            <ConfigRow
-              label="Reinvest profits"
-              value={config.reinvestPct}
-              onChange={(v) => setConfig((c) => ({ ...c, reinvestPct: v }))}
-              suffix="%" min={0} max={100}
-            />
-            <div className="flex items-center justify-between text-[10px] text-gray-600 pt-1">
-              <span>
-                {config.reinvestPct}% of profit → pool ·{" "}
-                {100 - config.reinvestPct}% → personal
-              </span>
-              <span>
-                e.g. $500 profit: +{fmt(500 * config.reinvestPct / 100)} pool,{" "}
-                +{fmt(500 * (100 - config.reinvestPct) / 100)} personal
-              </span>
-            </div>
+      {configOpen && (() => {
+        const intervalLabel =
+          config.intervalSec >= 3600 ? `every ${(config.intervalSec / 3600).toFixed(config.intervalSec % 3600 ? 1 : 0)}h`
+          : config.intervalSec >= 60 ? `every ${Math.round(config.intervalSec / 60)}m`
+          : `every ${config.intervalSec}s`;
+        const retrainLabel =
+          config.retrainHours >= 24 ? `every ${(config.retrainHours / 24).toFixed(config.retrainHours % 24 ? 1 : 0)}d`
+          : `every ${config.retrainHours}h`;
+        return (
+        <div className="space-y-3">
+          {isRunning && (
+            <p className="flex items-center gap-2 text-[10px] text-amber-400/90 bg-amber-950/30 border border-amber-900/40 rounded-lg px-3 py-2">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" className="shrink-0">
+                <rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" />
+              </svg>
+              Trading &amp; capital settings are locked while running — Auto-pilot tuning stays live. Stop &amp; Reset to change the rest.
+            </p>
+          )}
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            {/* Trading cadence */}
+            <Section
+              title="Trading"
+              caption={`Manages up to ${config.maxTrades} positions · evaluates ${intervalLabel}`}
+              locked={isRunning}
+              icon={<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 17l6-6 4 4 8-8" /><path d="M17 7h4v4" /></svg>}
+            >
+              <ConfigRow
+                label="Max concurrent trades"
+                value={config.maxTrades}
+                onChange={(v) => setConfig((c) => ({ ...c, maxTrades: v }))}
+                min={1} max={20} disabled={isRunning}
+              />
+              <ConfigRow
+                label="Eval interval"
+                value={config.intervalSec}
+                onChange={(v) => setConfig((c) => ({ ...c, intervalSec: v }))}
+                suffix="sec" min={5} max={86400} logScale disabled={isRunning}
+              />
+            </Section>
+
+            {/* Capital & pool */}
+            <Section
+              title="Capital & Pool"
+              caption={`${fmt(config.poolTotal, true)} pool · ${config.reinvestPct}% of profit reinvested`}
+              locked={isRunning}
+              icon={<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 7v10M9.5 9.5a2.5 2 0 0 1 5 0c0 2.5-5 1.5-5 4a2.5 2 0 0 0 5 0" /></svg>}
+            >
+              <ConfigRow
+                label="Capital pool"
+                value={config.poolTotal}
+                onChange={handlePoolTotalChange}
+                prefix="$" min={100} max={10_000_000} step={100} logScale disabled={isRunning}
+              />
+              <ConfigRow
+                label="Reinvest profits"
+                value={config.reinvestPct}
+                onChange={(v) => setConfig((c) => ({ ...c, reinvestPct: v }))}
+                suffix="%" min={0} max={100} disabled={isRunning}
+              />
+              <p className="rounded-lg bg-gray-900/60 border border-gray-800/80 px-2.5 py-1.5 text-[10px] text-gray-500">
+                Each profit splits <span className="text-emerald-500">{config.reinvestPct}% → pool</span>,{" "}
+                <span className="text-indigo-400">{100 - config.reinvestPct}% → personal</span>.
+                <span className="text-gray-600"> e.g. $500 → +{fmt(500 * config.reinvestPct / 100)} / +{fmt(500 * (100 - config.reinvestPct) / 100)}.</span>
+              </p>
+            </Section>
           </div>
+
+          {/* Auto-pilot — editable while running (retraining is independent of trading) */}
+          <Section
+            title="Auto-Pilot"
+            caption={config.autoRetrain ? `Retrains ${retrainLabel} · optimizing ${config.objective}` : "Continuous retraining is off"}
+            icon={<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 4v5h-5" /></svg>}
+          >
+            <Toggle
+              label="Auto-retrain the deployed strategy"
+              description="Re-optimizes on the latest market data on a timer, even while you trade."
+              checked={config.autoRetrain}
+              onChange={(v) => setConfig((c) => ({ ...c, autoRetrain: v }))}
+            />
+            <div className="grid gap-3.5 sm:grid-cols-2 border-t border-gray-800/70 pt-3.5">
+              <SelectRow
+                label="Optimize for"
+                value={config.objective}
+                onChange={(v) => setConfig((c) => ({ ...c, objective: v }))}
+                options={[
+                  { value: "sharpe", label: "Sharpe ratio" },
+                  { value: "sortino", label: "Sortino ratio" },
+                  { value: "calmar", label: "Calmar ratio" },
+                  { value: "totalReturn", label: "Total return" },
+                ]}
+                disabled={!config.autoRetrain}
+              />
+              <div className="hidden sm:block" />
+              <ConfigRow
+                label="Retrain every"
+                value={config.retrainHours}
+                onChange={(v) => setConfig((c) => ({ ...c, retrainHours: v }))}
+                suffix="h" min={1} max={720} logScale disabled={!config.autoRetrain}
+              />
+              <ConfigRow
+                label="Train window"
+                value={config.trainWindowMonths}
+                onChange={(v) => setConfig((c) => ({ ...c, trainWindowMonths: v }))}
+                suffix="mo" min={3} max={60} disabled={!config.autoRetrain}
+              />
+            </div>
+            <div className="border-t border-gray-800/70 pt-3.5">
+              <Toggle
+                label="Walk-forward guard"
+                description={config.promoteOnlyIfBetter
+                  ? "Adopts a retrained strategy only when its out-of-sample score holds up vs the live one — rejects overfit."
+                  : "Adopts every retrain result, even when its held-out score is worse. Riskier."}
+                checked={config.promoteOnlyIfBetter}
+                onChange={(v) => setConfig((c) => ({ ...c, promoteOnlyIfBetter: v }))}
+              />
+            </div>
+          </Section>
         </div>
-      )}
+        );
+      })()}
 
       {/* Token usage panel */}
       {tokensOpen && (
@@ -758,6 +1193,99 @@ export default function TradingEngine() {
         </div>
       )}
 
+      {/* Auto-pilot panel */}
+      {autopilotOpen && (
+        <div className="rounded-xl border border-gray-800 bg-gray-900/60 px-5 py-4 space-y-4">
+          {/* Header / controls */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-xs font-semibold text-white">Auto-Pilot Strategy</p>
+              <p className="text-[10px] text-gray-600 mt-0.5">
+                {config.autoRetrain
+                  ? `Retraining every ${config.retrainHours}h on the last ${config.trainWindowMonths}mo · optimizing ${config.objective}`
+                  : "Continuous retraining is off — enable it in Config, or retrain manually."}
+              </p>
+            </div>
+            <button
+              onClick={() => retrainRef.current()}
+              disabled={retrainStatus === "training"}
+              className="rounded-lg border border-emerald-800/60 bg-emerald-950/40 px-3 py-1.5 text-xs font-semibold text-emerald-300 hover:bg-emerald-900/40 transition-colors disabled:opacity-50"
+            >
+              {retrainStatus === "training" ? "Retraining…" : "Retrain now"}
+            </button>
+          </div>
+
+          {strategy ? (
+            <>
+              {/* Deployed strategy stats */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { label: "Test score", value: strategy.testScore.toFixed(3), sub: `${strategy.objective} (out-of-sample)`, color: "text-emerald-300" },
+                  { label: "Train score", value: strategy.trainScore.toFixed(3), sub: "in-sample", color: "text-gray-300" },
+                  { label: "vs baseline", value: strategy.baselineTestScore != null ? (strategy.testScore >= strategy.baselineTestScore ? "beats" : "below") : "—", sub: strategy.baselineTestScore != null ? strategy.baselineTestScore.toFixed(3) : "n/a", color: strategy.baselineTestScore != null && strategy.testScore >= strategy.baselineTestScore ? "text-emerald-400" : "text-gray-400" },
+                  { label: "Deployed", value: strategy.source === "auto" ? "auto" : "manual", sub: fmtTime(strategy.deployedAt), color: "text-indigo-300" },
+                ].map((s) => (
+                  <div key={s.label} className="rounded-lg border border-gray-800 bg-gray-900/40 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-widest text-gray-600">{s.label}</p>
+                    <p className={`text-sm font-mono font-bold mt-0.5 ${s.color}`}>{s.value}</p>
+                    <p className="text-[10px] text-gray-700 mt-0.5 truncate">{s.sub}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Target selection */}
+              <div>
+                <p className="text-[10px] uppercase tracking-widest text-gray-600 mb-2">
+                  Target selection ({strategy.target.length}) — the engine trades toward these
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {strategy.target.map((t) => {
+                    const held = positions.some((p) => p.ticker === t.ticker);
+                    return (
+                      <span
+                        key={t.ticker}
+                        className={`rounded-md border px-2 py-1 text-[10px] font-mono ${
+                          held ? "border-emerald-800/60 bg-emerald-950/40 text-emerald-300" : "border-gray-700 bg-gray-900 text-gray-400"
+                        }`}
+                        title={held ? "currently held" : "target — not yet held"}
+                      >
+                        {t.ticker} <span className="text-gray-600">{t.weight.toFixed(1)}%</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-gray-600 text-center py-3">
+              No strategy deployed. Train one in the Backtest tab and click <span className="text-emerald-400">Deploy to Auto-Pilot</span>,
+              or hit <span className="text-emerald-400">Retrain now</span> to optimize one on the latest data.
+            </p>
+          )}
+
+          {/* Retrain log */}
+          {retrainLog.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-gray-600 mb-2">
+                Retrain history {lastRetrainAt > 0 && <span className="text-gray-700">· last {fmtTime(lastRetrainAt)}</span>}
+              </p>
+              <div className="rounded-lg border border-gray-800 bg-gray-900/40 divide-y divide-gray-800/60 max-h-40 overflow-y-auto">
+                {[...retrainLog].reverse().slice(0, 12).map((e, i) => (
+                  <div key={i} className="px-3 py-1.5 flex items-center gap-2 text-[10px]">
+                    <span className="text-gray-700 font-mono shrink-0">{fmtTime(e.at)}</span>
+                    <span className={`shrink-0 font-semibold ${e.promoted ? "text-emerald-400" : "text-gray-600"}`}>
+                      {e.promoted ? "● deployed" : "○ kept live"}
+                    </span>
+                    <span className="text-gray-500 font-mono">test {e.testScore.toFixed(3)}</span>
+                    <span className="text-gray-700 truncate flex-1">{e.reason}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Pool stats bar */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
@@ -770,8 +1298,8 @@ export default function TradingEngine() {
           {
             label: "Current value",
             value: fmt(currentValue),
-            sub: `vs ${fmt(config.poolTotal)} start`,
-            color: currentValue >= config.poolTotal ? "text-emerald-300" : "text-red-300",
+            sub: `vs ${fmt(initialCapital)} start`,
+            color: currentValue >= initialCapital ? "text-emerald-300" : "text-red-300",
           },
           {
             label: "Open P&L",
@@ -865,12 +1393,17 @@ export default function TradingEngine() {
 
       {/* P&L history chart */}
       {pnlHistory.length >= 2 && (() => {
-        const initial = config.poolTotal;
-        const chartData = pnlHistory.map((s) => ({
-          time: new Date(s.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          total: parseFloat(((s.poolValue + s.personal + s.unrealized) - initial).toFixed(2)),
-          realized: parseFloat(((s.poolValue + s.personal) - initial).toFixed(2)),
-        }));
+        const initial = initialCapital;
+        const chartData = pnlHistory.map((s) => {
+          // Prefer the tracked realized P&L; fall back to the book-derived value
+          // for snapshots saved before `realized` was recorded.
+          const realized = s.realized ?? ((s.poolValue + s.personal) - initial);
+          return {
+            time: new Date(s.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            total: parseFloat((realized + s.unrealized).toFixed(2)),
+            realized: parseFloat(realized.toFixed(2)),
+          };
+        });
         const allVals = chartData.flatMap((d) => [d.total, d.realized]);
         const minVal  = Math.min(...allVals, 0);
         const maxVal  = Math.max(...allVals, 0);

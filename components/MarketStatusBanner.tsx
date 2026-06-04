@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { getSessionUsage, TOKEN_EVENT, type TokenUsage } from '@/lib/tokenUsage';
 
 // NYSE observed holidays
 const NYSE_HOLIDAYS = new Set([
@@ -109,8 +110,15 @@ function fmtCountdown(secs: number): string {
   return `${s}s`;
 }
 
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return String(n);
+}
+
 export default function MarketStatusBanner() {
   const [info, setInfo] = useState<{ isOpen: boolean; secsUntil: number } | null>(null);
+  const [tokens, setTokens] = useState<TokenUsage>({ input: 0, output: 0, cacheRead: 0 });
 
   useEffect(() => {
     const update = () => setInfo(getMarketInfo(new Date()));
@@ -119,38 +127,58 @@ export default function MarketStatusBanner() {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    setTokens(getSessionUsage());
+    const handler = (e: Event) => setTokens((e as CustomEvent<TokenUsage>).detail);
+    window.addEventListener(TOKEN_EVENT, handler);
+    return () => window.removeEventListener(TOKEN_EVENT, handler);
+  }, []);
+
   if (!info) return null;
+
+  const totalTokens = tokens.input + tokens.output + tokens.cacheRead;
 
   return (
     <div
-      className={`w-full shrink-0 flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium border-b ${
+      className={`w-full shrink-0 flex items-center px-4 py-1.5 text-xs font-medium border-b ${
         info.isOpen
           ? 'bg-emerald-950/60 border-emerald-900/50 text-emerald-400'
           : 'bg-gray-950 border-gray-800/60 text-gray-500'
       }`}
     >
-      <span
-        className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-          info.isOpen ? 'bg-emerald-400 animate-pulse' : 'bg-gray-600'
-        }`}
-      />
-      {info.isOpen ? (
-        <>
-          US Market{' '}
-          <span className="font-semibold text-emerald-300">open</span>
-          <span className="text-emerald-700 mx-1">·</span>
-          closes in{' '}
-          <span className="font-mono tabular-nums">{fmtCountdown(info.secsUntil)}</span>
-        </>
-      ) : (
-        <>
-          US Market{' '}
-          <span className="font-semibold text-gray-400">closed</span>
-          <span className="text-gray-700 mx-1">·</span>
-          opens in{' '}
-          <span className="font-mono tabular-nums">{fmtCountdown(info.secsUntil)}</span>
-        </>
-      )}
+      <div className="flex-1" />
+      <div className="flex items-center gap-2">
+        <span
+          className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+            info.isOpen ? 'bg-emerald-400 animate-pulse' : 'bg-gray-600'
+          }`}
+        />
+        {info.isOpen ? (
+          <>
+            US Market{' '}
+            <span className="font-semibold text-emerald-300">open</span>
+            <span className="text-emerald-700 mx-1">·</span>
+            closes in{' '}
+            <span className="font-mono tabular-nums">{fmtCountdown(info.secsUntil)}</span>
+          </>
+        ) : (
+          <>
+            US Market{' '}
+            <span className="font-semibold text-gray-400">closed</span>
+            <span className="text-gray-700 mx-1">·</span>
+            opens in{' '}
+            <span className="font-mono tabular-nums">{fmtCountdown(info.secsUntil)}</span>
+          </>
+        )}
+      </div>
+      <div className="flex-1 flex justify-end">
+        <span
+          className="font-mono tabular-nums text-gray-500"
+          title={`Input: ${tokens.input.toLocaleString()} · Output: ${tokens.output.toLocaleString()} · Cache read: ${tokens.cacheRead.toLocaleString()}`}
+        >
+          {fmtTokens(totalTokens)} tok
+        </span>
+      </div>
     </div>
   );
 }

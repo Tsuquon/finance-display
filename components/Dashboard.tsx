@@ -6,33 +6,155 @@ import dynamic from "next/dynamic";
 import type { Company } from "@/types";
 import type { BatchScoreMap } from "@/app/api/scores/batch/route";
 import type { QuantScoreMap } from "@/app/api/quant/route";
+import type { StatisticsMap } from "@/app/api/statistics/route";
 import { cats } from "@/data/categories";
+import { loadCustomCompanies, CUSTOM_COMPANIES_KEY, CUSTOM_COMPANIES_KEY_AU } from "@/lib/portfolios";
 import CompanyCard from "./CompanyCard";
 import NewsTicker from "./NewsTicker";
 import LoadingScreen from "./LoadingScreen";
+import SP500Chart from "./SP500Chart";
+import DataFreshness from "./DataFreshness";
 
 const StockPanel = dynamic(() => import("./StockPanel"), { ssr: false });
-const AIChat = dynamic(() => import("./AIChat"), { ssr: false });
 
-const CUSTOM_KEY = "finance-custom-companies";
+type Market = "us" | "au";
+
+const MARKETS: { key: Market; label: string }[] = [
+  { key: "us", label: "US" },
+  { key: "au", label: "ASX" },
+];
+
+// Persist the selected market so a page refresh keeps the user on their tab
+// (e.g. ASX) instead of reverting to the US default.
+const MARKET_KEY = "finance-market";
+
+function customKeyFor(market: Market): string {
+  return market === "au" ? CUSTOM_COMPANIES_KEY_AU : CUSTOM_COMPANIES_KEY;
+}
+
+// Index shown above each market's grid.
+const INDEX_FOR: Record<Market, { symbol: string; label: string }> = {
+  us: { symbol: "^GSPC", label: "S&P 500" },
+  au: { symbol: "^AXJO", label: "S&P/ASX 200" },
+};
+
+type SortKey =
+  | "default" | "shortTerm" | "longTerm" | "quant"
+  | "pe" | "volume" | "dividend" | "marketCap";
+
+// Score-based sorts pull from /api/scores/batch or /api/quant; metric-based
+// sorts read the already-loaded /api/statistics snapshot and sort client-side.
+const SCORE_SORTS = new Set<SortKey>(["shortTerm", "longTerm", "quant"]);
+const METRIC_SORTS = new Set<SortKey>(["pe", "volume", "dividend", "marketCap"]);
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: "default",   label: "Default"    },
+  { key: "shortTerm", label: "Short Term" },
+  { key: "longTerm",  label: "Long Term"  },
+  { key: "quant",     label: "Quant"      },
+  { key: "pe",        label: "P/E"        },
+  { key: "volume",    label: "Volume"     },
+  { key: "dividend",  label: "Div Yield"  },
+  { key: "marketCap", label: "Mkt Cap"    },
+];
+
+// Compact human-readable number, e.g. 1.2B, 340M, 12.4K.
+function compactNum(v: number): string {
+  const a = Math.abs(v);
+  if (a >= 1e12) return `${(v / 1e12).toFixed(1)}T`;
+  if (a >= 1e9)  return `${(v / 1e9).toFixed(1)}B`;
+  if (a >= 1e6)  return `${(v / 1e6).toFixed(1)}M`;
+  if (a >= 1e3)  return `${(v / 1e3).toFixed(1)}K`;
+  return v.toFixed(0);
+}
+
+// The raw value a metric sort ranks by (undefined ⇒ sorts to the bottom).
+function metricValue(key: SortKey, s: StatisticsMap[string] | undefined): number | undefined {
+  if (!s) return undefined;
+  switch (key) {
+    case "pe":        return s.trailingPE ?? undefined;
+    case "volume":    return s.averageVolume ?? undefined;
+    case "dividend":  return s.dividendYield ?? undefined;
+    case "marketCap": return s.marketCap ?? undefined;
+    default:          return undefined;
+  }
+}
+
+// Short badge shown on each card for the active metric sort.
+function metricDisplay(key: SortKey, s: StatisticsMap[string] | undefined): string | undefined {
+  const v = metricValue(key, s);
+  if (v == null) return undefined;
+  switch (key) {
+    case "pe":        return `P/E ${v.toFixed(1)}`;
+    case "volume":    return `Vol ${compactNum(v)}`;
+    case "dividend":  return `Yld ${(v * 100).toFixed(2)}%`;
+    case "marketCap": return `$${compactNum(v)}`;
+    default:          return undefined;
+  }
+}
+
+// Trainer-seeded custom entries start as skeletons (ticker only, no AI analysis).
+// Detect them so they can be back-filled on load.
+function isSkeleton(c: Company): boolean {
+  return c.name === c.ticker && !c.reason && !c.industry;
+}
+
+// Back-fill name + AI classification for skeleton custom entries already sitting in
+// localStorage (seeded before on-seed enrichment existed, or whose enrichment never
+// completed). Best-effort and sequential; each ticker is patched into React state and
+// localStorage as it resolves, preserving the strategy's category and id. Failures
+// leave the skeleton in place.
+async function enrichSkeletons(
+  skeletons: Company[],
+  setCompanies: React.Dispatch<React.SetStateAction<Company[]>>,
+  customKey: string,
+) {
+  for (const seed of skeletons) {
+    try {
+      const stored: Company[] = loadCustomCompanies(customKey);
+      const res = await fetch("/api/companies/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: seed.ticker, existingIds: stored.map((c) => c.id) }),
+      });
+      if (!res.ok) continue;
+      const full: Company = await res.json();
+      const enriched: Company = { ...full, id: seed.id, category: seed.category };
+
+      const current: Company[] = loadCustomCompanies(customKey);
+      const idx = current.findIndex((c) => c.ticker === seed.ticker);
+      if (idx >= 0) {
+        current[idx] = enriched;
+        localStorage.setItem(customKey, JSON.stringify(current));
+      }
+      setCompanies((prev) => prev.map((c) => (c.ticker === seed.ticker ? enriched : c)));
+    } catch { /* leave the skeleton in place for this ticker */ }
+  }
+}
 
 function Divider() {
   return <div className="w-px h-4 shrink-0 bg-gray-800" />;
 }
 
 export default function Dashboard() {
+  const [market, setMarket] = useState<Market>("us");
+  // Gate the feed fetch until we've restored the persisted market, so we don't
+  // fire a wasted US fetch before switching to the saved (e.g. ASX) tab. Starts
+  // as "us" to match SSR and avoid a hydration mismatch on the toggle.
+  const [marketRestored, setMarketRestored] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [tokensUsed, setTokensUsed] = useState(0);
   const [selected, setSelected] = useState<Company | null>(null);
   const [search, setSearch] = useState("");
   const [industry, setIndustry] = useState("All");
-  const [chatOpen, setChatOpen] = useState(false);
 
-  const [sortBy, setSortBy] = useState<"default" | "shortTerm" | "longTerm" | "quant">("default");
+  const [sortBy, setSortBy] = useState<SortKey>("default");
   const [scores, setScores] = useState<BatchScoreMap>({});
   const [quantScores, setQuantScores] = useState<QuantScoreMap>({});
   const [scoresLoading, setScoresLoading] = useState(false);
+  const [stats, setStats] = useState<StatisticsMap>({});
+  const [statsLoading, setStatsLoading] = useState(false);
   const [panelVisible, setPanelVisible] = useState(false);
   const [customTickers, setCustomTickers] = useState<Set<string>>(new Set());
   const [compact, setCompact] = useState(false);
@@ -40,27 +162,74 @@ export default function Dashboard() {
   const [addTicker, setAddTicker] = useState("");
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState("");
+  const [suggestions, setSuggestions] = useState<{ symbol: string; name: string }[]>([]);
+  const [suggIdx, setSuggIdx] = useState(-1);
   const addInputRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Restore the persisted market once, on mount, before the feed fetch runs.
+  useEffect(() => {
+    const saved = localStorage.getItem(MARKET_KEY);
+    if (saved === "au" || saved === "us") setMarket(saved);
+    setMarketRestored(true);
+  }, []);
 
   useEffect(() => {
-    const saved: Company[] = JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? "[]");
+    if (!marketRestored) return;
+    const customKey = customKeyFor(market);
+    const saved: Company[] = loadCustomCompanies(customKey);
     setCustomTickers(new Set(saved.map((c) => c.ticker)));
-    fetch("/api/companies")
+    fetch(`/api/companies?market=${market}`)
       .then((r) => {
         const tok = r.headers.get("X-Tokens-Used");
         if (tok) setTokensUsed(Number(tok));
         return r.json() as Promise<Company[]>;
       })
       .then((data) => {
-        const fetched = data.filter((c) => !saved.some((s) => s.ticker === c.ticker));
-        setCompanies([...fetched, ...saved]);
+        // Authoritative screener data wins. Keep only custom entries for tickers
+        // NOT in the fetched set — otherwise a stale/old-schema saved entry would
+        // shadow the good fetched record (e.g. an empty custom TSLA hiding the real one).
+        const fetchedTickers = new Set(data.map((c) => c.ticker));
+        const extraCustoms = saved.filter((s) => !fetchedTickers.has(s.ticker));
+        if (extraCustoms.length !== saved.length) {
+          localStorage.setItem(customKey, JSON.stringify(extraCustoms));
+        }
+        setCustomTickers(new Set(extraCustoms.map((c) => c.ticker)));
+        const allCompanies = [...data, ...extraCustoms];
+        setCompanies(allCompanies);
         setLoading(false);
+
+        // Warm the Yahoo-statistics DB cache for every displayed company so the
+        // chat AI and AI analysis have fundamentals pre-loaded, and capture the
+        // snapshot into state to drive the P/E / volume / dividend / market-cap
+        // sorts. Server-side it upserts into stock_statistics (12h TTL, so this
+        // is a no-op once warm). Best-effort — failures leave metric sorts empty.
+        const tickers = allCompanies.map((c) => c.ticker);
+        if (tickers.length > 0) {
+          setStatsLoading(true);
+          fetch("/api/statistics", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tickers }),
+          })
+            .then((r) => r.json() as Promise<StatisticsMap>)
+            .then((data) => setStats(data ?? {}))
+            .catch(() => { /* best-effort cache warm */ })
+            .finally(() => setStatsLoading(false));
+        }
+
+        // Back-fill any pre-existing skeleton custom entries (e.g. trainer picks
+        // outside the top-120 feed seeded before on-seed enrichment existed).
+        const skeletons = extraCustoms.filter(isSkeleton);
+        if (skeletons.length) void enrichSkeletons(skeletons, setCompanies, customKey);
       })
       .catch(() => setLoading(false));
-  }, []);
+  }, [market, marketRestored]);
 
   useEffect(() => {
-    if (sortBy === "default" || companies.length === 0) return;
+    // Metric sorts (P/E, volume, dividend, market cap) read the statistics
+    // snapshot already in state — no extra fetch needed here.
+    if (!SCORE_SORTS.has(sortBy) || companies.length === 0) return;
     setScoresLoading(true);
 
     if (sortBy === "quant") {
@@ -97,8 +266,23 @@ export default function Dashboard() {
     if (addOpen) setTimeout(() => addInputRef.current?.focus(), 50);
   }, [addOpen]);
 
-  async function handleAdd() {
-    const ticker = addTicker.trim().toUpperCase();
+  useEffect(() => {
+    const q = addTicker.trim();
+    if (!q) { setSuggestions([]); setSuggIdx(-1); return; }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/companies/search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        setSuggestions(data);
+        setSuggIdx(-1);
+      } catch { /* ignore */ }
+    }, 200);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [addTicker]);
+
+  async function handleAdd(overrideTicker?: string) {
+    const ticker = (overrideTicker ?? addTicker).trim().toUpperCase();
     if (!ticker) return;
     if (companies.some((c) => c.ticker === ticker)) {
       setAddError(`${ticker} is already in the list.`);
@@ -106,6 +290,8 @@ export default function Dashboard() {
     }
     setAddLoading(true);
     setAddError("");
+    setSuggestions([]);
+    setSuggIdx(-1);
     try {
       const res = await fetch("/api/companies/add", {
         method: "POST",
@@ -116,8 +302,9 @@ export default function Dashboard() {
       if (!res.ok) { setAddError(data.error ?? "Failed."); return; }
       setCompanies((prev) => [...prev, data]);
       setCustomTickers((prev) => new Set([...prev, data.ticker]));
-      const custom: Company[] = JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? "[]");
-      localStorage.setItem(CUSTOM_KEY, JSON.stringify([...custom, data]));
+      const customKey = customKeyFor(market);
+      const custom: Company[] = loadCustomCompanies(customKey);
+      localStorage.setItem(customKey, JSON.stringify([...custom, data]));
       setAddTicker("");
       setAddOpen(false);
     } catch {
@@ -127,13 +314,29 @@ export default function Dashboard() {
     }
   }
 
+  function switchMarket(next: Market) {
+    if (next === market) return;
+    localStorage.setItem(MARKET_KEY, next);
+    // Clear the current market's view before the new feed loads.
+    setLoading(true);
+    setCompanies([]);
+    setSelected(null);
+    setScores({});
+    setQuantScores({});
+    setStats({});
+    setSearch("");
+    setIndustry("All");
+    setMarket(next);
+  }
+
   function handleRemove(ticker: string) {
     const updated = companies.filter((c) => c.ticker !== ticker);
     setCompanies(updated);
     if (selected?.ticker === ticker) setSelected(null);
     setCustomTickers((prev) => { const s = new Set(prev); s.delete(ticker); return s; });
-    const custom: Company[] = JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? "[]");
-    localStorage.setItem(CUSTOM_KEY, JSON.stringify(custom.filter((c) => c.ticker !== ticker)));
+    const customKey = customKeyFor(market);
+    const custom: Company[] = loadCustomCompanies(customKey);
+    localStorage.setItem(customKey, JSON.stringify(custom.filter((c) => c.ticker !== ticker)));
   }
 
   const industries = useMemo(() => {
@@ -159,6 +362,16 @@ export default function Dashboard() {
       if (sortBy === "default") return 0;
       if (sortBy === "quant")
         return (quantScores[b.ticker]?.score ?? 0) - (quantScores[a.ticker]?.score ?? 0);
+      if (METRIC_SORTS.has(sortBy)) {
+        const va = metricValue(sortBy, stats[a.ticker]);
+        const vb = metricValue(sortBy, stats[b.ticker]);
+        // Missing values always sink to the bottom regardless of direction.
+        if (va == null && vb == null) return 0;
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        // Lower P/E ranks first; every other metric ranks highest-first.
+        return sortBy === "pe" ? va - vb : vb - va;
+      }
       const key = sortBy === "shortTerm" ? "st" : "lt";
       return (scores[b.ticker]?.[key] ?? 0) - (scores[a.ticker]?.[key] ?? 0);
     };
@@ -167,7 +380,7 @@ export default function Dashboard() {
       stable: filtered.filter((c) => c.category === "stable").sort(sortFn),
       fading: filtered.filter((c) => c.category === "fading").sort(sortFn),
     };
-  }, [filtered, sortBy, scores]);
+  }, [filtered, sortBy, scores, quantScores, stats]);
 
   const btnBase = "flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-mono tracking-wide transition-all duration-150 cursor-pointer";
   const btnIdle = "border-gray-800 bg-gray-900/50 text-gray-500 hover:border-gray-700 hover:text-gray-300";
@@ -176,15 +389,10 @@ export default function Dashboard() {
   return (
     <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
       <LoadingScreen visible={loading} />
-      {chatOpen && (
-        <div className="w-80 shrink-0 z-30 flex flex-col">
-          <AIChat companies={companies} onClose={() => setChatOpen(false)} />
-        </div>
-      )}
 
-      <div className="flex flex-1 min-w-0 flex-col overflow-hidden">
+      <div className="flex flex-1 min-w-0 flex-col">
         {/* Header */}
-        <header className="flex shrink-0 items-center gap-2.5 border-b border-gray-800/80 bg-gray-950/95 px-5 py-2.5 backdrop-blur">
+        <header className="relative z-10 flex shrink-0 items-center gap-2.5 border-b border-gray-800/80 bg-gray-950/95 px-5 py-2.5 backdrop-blur">
 
           {/* Logo */}
           <div className="flex items-center gap-2 shrink-0">
@@ -194,6 +402,25 @@ export default function Dashboard() {
             <h1 className="text-sm font-bold tracking-tight text-white whitespace-nowrap">
               Portfolio Lens
             </h1>
+          </div>
+
+          <Divider />
+
+          {/* Market tabs — US / ASX */}
+          <div className="flex items-center rounded-lg bg-gray-900/80 border border-gray-800/80 p-0.5 gap-px shrink-0">
+            {MARKETS.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => switchMarket(key)}
+                className={`rounded-md px-3 py-1 text-[11px] font-mono font-semibold tracking-wide transition-all duration-150 ${
+                  market === key
+                    ? "bg-gray-800 text-white shadow-sm"
+                    : "text-gray-600 hover:text-gray-400"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           <Divider />
@@ -231,33 +458,66 @@ export default function Dashboard() {
 
             <div className="relative">
               <button
-                onClick={() => { setAddOpen((o) => !o); setAddError(""); setAddTicker(""); }}
+                onClick={() => { setAddOpen((o) => !o); setAddError(""); setAddTicker(""); setSuggestions([]); setSuggIdx(-1); }}
                 className={`${btnBase} ${addOpen ? btnActive : btnIdle}`}
               >
                 + Add
               </button>
               {addOpen && (
-                <div className="absolute right-0 top-full mt-1.5 z-50 w-64 rounded-xl border border-gray-700/80 bg-gray-900/95 p-3.5 shadow-2xl backdrop-blur">
+                <div className="absolute right-0 top-full mt-1.5 z-50 w-72 rounded-xl border border-gray-700/80 bg-gray-900/95 p-3.5 shadow-2xl backdrop-blur">
                   <p className="mb-2.5 text-[10px] font-mono font-semibold uppercase tracking-widest text-gray-500">
-                    Add by ticker
+                    Search ticker or name
                   </p>
                   <div className="flex gap-2">
                     <input
                       ref={addInputRef}
                       value={addTicker}
                       onChange={(e) => { setAddTicker(e.target.value.toUpperCase()); setAddError(""); }}
-                      onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-                      placeholder="e.g. AAPL"
+                      onKeyDown={(e) => {
+                        if (e.key === "ArrowDown") {
+                          e.preventDefault();
+                          setSuggIdx((i) => Math.min(i + 1, suggestions.length - 1));
+                        } else if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          setSuggIdx((i) => Math.max(i - 1, -1));
+                        } else if (e.key === "Enter") {
+                          if (suggIdx >= 0 && suggestions[suggIdx]) {
+                            handleAdd(suggestions[suggIdx].symbol);
+                          } else {
+                            handleAdd();
+                          }
+                        } else if (e.key === "Escape") {
+                          setSuggestions([]); setSuggIdx(-1);
+                        }
+                      }}
+                      placeholder="e.g. AAPL or Apple"
                       className="flex-1 rounded-lg border border-gray-700/80 bg-gray-800/60 px-2.5 py-1.5 text-xs font-mono text-white placeholder-gray-600 focus:border-gray-500 focus:outline-none"
                     />
                     <button
-                      onClick={handleAdd}
+                      onClick={() => handleAdd(suggIdx >= 0 ? suggestions[suggIdx]?.symbol : undefined)}
                       disabled={addLoading || !addTicker.trim()}
                       className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold font-mono text-white transition-colors hover:bg-indigo-500 disabled:opacity-40"
                     >
                       {addLoading ? "…" : "Add"}
                     </button>
                   </div>
+                  {suggestions.length > 0 && (
+                    <ul className="mt-1.5 flex flex-col gap-px">
+                      {suggestions.map((s, i) => (
+                        <li
+                          key={s.symbol}
+                          onMouseDown={(e) => { e.preventDefault(); handleAdd(s.symbol); }}
+                          onMouseEnter={() => setSuggIdx(i)}
+                          className={`flex items-center justify-between gap-2 cursor-pointer rounded-lg px-2.5 py-1.5 transition-colors ${
+                            i === suggIdx ? "bg-gray-700/70" : "hover:bg-gray-800/60"
+                          }`}
+                        >
+                          <span className="font-mono text-xs text-indigo-300 shrink-0">{s.symbol}</span>
+                          <span className="text-[11px] text-gray-400 truncate text-right">{s.name}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {addError && <p className="mt-2 text-[11px] text-red-400">{addError}</p>}
                 </div>
               )}
@@ -272,10 +532,10 @@ export default function Dashboard() {
               <span className="text-gray-600">◈</span> Portfolios
             </Link>
             <button
-              onClick={() => setChatOpen((o) => !o)}
-              className={`${btnBase} ${chatOpen ? btnActive : btnIdle}`}
+              onClick={() => window.dispatchEvent(new Event("toggle-ai-chat"))}
+              className={`${btnBase} ${btnIdle}`}
             >
-              <span className={chatOpen ? "text-indigo-400" : "text-gray-600"}>✦</span> AI Chat
+              <span className="text-gray-600">✦</span> AI Chat
             </button>
           </div>
         </header>
@@ -285,38 +545,59 @@ export default function Dashboard() {
           <span className="text-[10px] font-mono tracking-[0.15em] uppercase text-gray-700 select-none">
             Sort
           </span>
-          <div className="flex items-center rounded-lg bg-gray-900/80 border border-gray-800/80 p-0.5 gap-px">
-            {([
-              { key: "default",   label: "Default"    },
-              { key: "shortTerm", label: "Short Term" },
-              { key: "longTerm",  label: "Long Term"  },
-              { key: "quant",     label: "Quant"      },
-            ] as const).map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => setSortBy(key)}
-                className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-[10px] font-mono font-semibold tracking-wide transition-all duration-150 ${
-                  sortBy === key
-                    ? "bg-gray-800 text-white shadow-sm"
-                    : "text-gray-600 hover:text-gray-400"
-                }`}
-              >
-                {label}
-                {scoresLoading && sortBy === key && (
-                  <span className="h-2 w-2 animate-spin rounded-full border border-gray-500 border-t-gray-200" />
-                )}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center rounded-lg bg-gray-900/80 border border-gray-800/80 p-0.5 gap-px">
+            {SORT_OPTIONS.map(({ key, label }) => {
+              const busy =
+                sortBy === key &&
+                ((SCORE_SORTS.has(key) && scoresLoading) ||
+                  (METRIC_SORTS.has(key) && statsLoading));
+              return (
+                <button
+                  key={key}
+                  onClick={() => setSortBy(key)}
+                  className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-[10px] font-mono font-semibold tracking-wide transition-all duration-150 ${
+                    sortBy === key
+                      ? "bg-gray-800 text-white shadow-sm"
+                      : "text-gray-600 hover:text-gray-400"
+                  }`}
+                >
+                  {label}
+                  {busy && (
+                    <span className="h-2 w-2 animate-spin rounded-full border border-gray-500 border-t-gray-200" />
+                  )}
+                </button>
+              );
+            })}
           </div>
-          {!loading && search && (
-            <span className="ml-auto text-[10px] font-mono text-gray-700 tabular-nums">
-              {filtered.length} / {companies.length}
-            </span>
-          )}
+          <div className="ml-auto flex items-center gap-4">
+            {!loading && search && (
+              <span className="text-[10px] font-mono text-gray-700 tabular-nums">
+                {filtered.length} / {companies.length}
+              </span>
+            )}
+            <DataFreshness
+              companies={companies}
+              onRefreshed={(target) => {
+                // Pull the freshly re-scored values into the visible cards when an
+                // AI (short/long-term) sort is active.
+                if (target === "ai" && (sortBy === "shortTerm" || sortBy === "longTerm")) {
+                  fetch("/api/scores/batch", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ companies }),
+                  })
+                    .then((r) => r.json())
+                    .then(setScores)
+                    .catch(() => {});
+                }
+              }}
+            />
+          </div>
         </div>
 
         {/* Company grid */}
         <div className="flex-1 overflow-auto px-5 py-4">
+          {marketRestored && <SP500Chart symbol={INDEX_FOR[market].symbol} label={INDEX_FOR[market].label} />}
           {filtered.length === 0 && !loading ? (
             <div className="flex h-64 flex-col items-center justify-center gap-2">
               <span className="text-2xl text-gray-800">◈</span>
@@ -345,9 +626,9 @@ export default function Dashboard() {
                   <div className="space-y-2.5">
                     {categorized[cat].map((company) => (
                       <CompanyCard
-                        key={company.id}
+                        key={company.ticker}
                         company={company}
-                        selected={selected?.id === company.id}
+                        selected={selected?.ticker === company.ticker}
                         compact={compact}
                         sortScore={
                           sortBy === "shortTerm" ? scores[company.ticker]?.st :
@@ -362,8 +643,9 @@ export default function Dashboard() {
                           undefined
                         }
                         sortScoreMax={sortBy === "quant" ? 100 : 10}
+                        sortDisplay={METRIC_SORTS.has(sortBy) ? metricDisplay(sortBy, stats[company.ticker]) : undefined}
                         onClick={() => {
-                          if (selected?.id === company.id) { closePanel(); }
+                          if (selected?.ticker === company.ticker) { closePanel(); }
                           else { setPanelVisible(false); setSelected(company); }
                         }}
                         onRemove={customTickers.has(company.ticker) ? () => handleRemove(company.ticker) : undefined}

@@ -20,6 +20,7 @@ import type { QuantScoreMap } from "@/app/api/quant/route";
 import type { TechnicalResult } from "@/lib/technicalAnalysis";
 import { cats } from "@/data/categories";
 import type { SavedPortfolio, Mode, InvestmentRecord, SnapshotRow } from "@/lib/portfolios";
+import { loadCustomCompanies } from "@/lib/portfolios";
 import InvestModal from "./InvestModal";
 import DialInput from "./DialInput";
 import StrategyPicker from "./StrategyPicker";
@@ -67,6 +68,8 @@ interface AllocRow {
 interface Props {
   sheetMode?: boolean;
   initial?: SavedPortfolio;
+  /** Pre-populate an editable custom portfolio (e.g. handed off from the trainer). Does not lock. */
+  draftCustom?: { customAmounts: Record<string, number>; portfolioSize: string };
   onClose?: () => void;
   onSaved?: (p: SavedPortfolio) => void;
   onInvested?: (id: string, record: InvestmentRecord) => void;
@@ -90,7 +93,7 @@ function scoreColor(score: number, max: number) {
   return "text-red-400";
 }
 
-const CUSTOM_KEY = "finance-custom-companies";
+export const CUSTOM_KEY = "finance-custom-companies";
 
 function fmtSize(v: number) {
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
@@ -102,7 +105,7 @@ function fmtPct(v: number) {
 }
 function fmtPos(v: number) { return v === 0 ? "ALL" : String(v); }
 
-export default function PortfolioDashboard({ sheetMode, initial, onClose, onSaved, onInvested }: Props) {
+export default function PortfolioDashboard({ sheetMode, initial, draftCustom, onClose, onSaved, onInvested }: Props) {
   // Existing portfolios are locked — settings can't be changed after creation
   const locked = sheetMode && !!initial;
   const [companies, setCompanies]       = useState<Company[]>([]);
@@ -113,18 +116,19 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
   const [companiesReady, setCompaniesReady] = useState(false);
   const [scoresReady, setScoresReady]   = useState(false);
   const [scoresTokens, setScoresTokens] = useState(0);
+  const [scoresDegraded, setScoresDegraded] = useState(false);
   const [techProgress, setTechProgress] = useState(0);
   const [techTotal, setTechTotal]       = useState(0);
 
-  const [mode, setMode]               = useState<Mode>(initial?.mode ?? "balanced");
-  const [portfolioSize, setPortfolioSize] = useState(initial?.portfolioSize ?? "10000");
+  const [mode, setMode]               = useState<Mode>(initial?.mode ?? (draftCustom ? "custom" : "balanced"));
+  const [portfolioSize, setPortfolioSize] = useState(initial?.portfolioSize ?? draftCustom?.portfolioSize ?? "10000");
   const [minAlloc, setMinAlloc]       = useState(initial?.minAlloc ?? 1);
   const [maxPositions, setMaxPositions] = useState(initial?.maxPositions ?? 0);
   const [excluded, setExcluded]       = useState<Set<string>>(new Set(initial?.excluded ?? []));
   const [maxPosition, setMaxPosition] = useState(initial?.maxPosition ?? 20);
   const [maxPositionInput, setMaxPositionInput] = useState(String(initial?.maxPosition ?? 20));
   const [equalWeight, setEqualWeight] = useState(initial?.equalWeight ?? false);
-  const [customAmounts, setCustomAmounts] = useState<Record<string, number>>(initial?.customAmounts ?? {});
+  const [customAmounts, setCustomAmounts] = useState<Record<string, number>>(initial?.customAmounts ?? draftCustom?.customAmounts ?? {});
   const [customSearch, setCustomSearch] = useState("");
 
   // Save overlay
@@ -178,7 +182,7 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
     // Locked portfolios use their frozen snapshot — no fetching needed
     if (locked && initial?.snapshot) return;
 
-    const saved: Company[] = JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? "[]");
+    const saved: Company[] = loadCustomCompanies();
 
     fetch("/api/companies")
       .then((r) => r.json())
@@ -197,6 +201,7 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
           }).then((r) => {
             const tok = r.headers.get("X-Tokens-Used");
             if (tok) setScoresTokens(Number(tok));
+            if (r.headers.get("X-Scores-Degraded") === "true") setScoresDegraded(true);
             return r.json();
           }),
           fetch("/api/quant", {
@@ -467,6 +472,13 @@ export default function PortfolioDashboard({ sheetMode, initial, onClose, onSave
           techTotal={techTotal}
           contained={sheetMode}
         />
+      )}
+
+      {scoresDegraded && !loading && (
+        <div className="mx-4 mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+          AI scoring is currently unavailable — showing neutral scores. Allocations
+          reflect quant &amp; technical signals only. Real AI scores will return automatically once the service is restored.
+        </div>
       )}
 
       {/* Save overlay (sheet mode) */}

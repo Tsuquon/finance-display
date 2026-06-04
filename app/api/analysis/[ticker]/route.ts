@@ -16,7 +16,7 @@ const yf = new (YFDefault as any)({
 
 type CacheEntry = { data: TechnicalResult; at: number };
 const cache = new Map<string, CacheEntry>();
-const TTL = 30 * 60 * 1000; // 30 minutes
+const TTL = 60 * 1000; // 1 minute
 
 export async function GET(
   _req: NextRequest,

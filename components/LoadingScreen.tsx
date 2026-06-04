@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 
 const MILESTONES = [
   { label: "Connecting to market feeds",          ms: 0    },
-  { label: "Fetching top 60 most active equities", ms: 1200 },
+  { label: "Fetching top 120 most active equities", ms: 1200 },
   { label: "Running AI analysis",                 ms: 2800 },
   { label: "Building your dashboard",             ms: null  },
 ];

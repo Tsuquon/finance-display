@@ -97,11 +97,15 @@ export default function InvestModal({ allocations, onClose, onInvested }: Props)
       const data = await res.json();
       if (data.error) { setStep("error"); setErrorMsg(data.error); return; }
       setResults(data.results ?? []);
-      // Use the user-selected date (parsed as local midnight to avoid UTC offset issues)
+      const today = new Date().toISOString().slice(0, 10);
       const [y, m, d] = investmentDate.split('-').map(Number);
+      // If today is selected, keep the server's exact timestamp; otherwise use midnight of the chosen date.
+      const investedAt = investmentDate === today
+        ? (data.investmentRecord.investedAt as number)
+        : new Date(y, m - 1, d).getTime();
       const record: InvestmentRecord = {
         ...data.investmentRecord,
-        investedAt: new Date(y, m - 1, d).getTime(),
+        investedAt,
       };
       setInvestRecord(record);
       setStep("done");

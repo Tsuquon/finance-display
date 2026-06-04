@@ -4,7 +4,9 @@ import http from "node:http";
 const GATEWAY = (process.env.IBKR_GATEWAY_URL ?? "https://localhost:5001").replace(/\/$/, "");
 export const PAPER_MODE = process.env.IBKR_PAPER === "true";
 export const MOCK_MODE  = process.env.IBKR_MOCK  === "true";
-// Demo mode: real Yahoo Finance + real AI, but IBKR is still simulated (requires IBKR_MOCK=true)
+// Demo mode: real Yahoo Finance + real AI. Trades are simulated when IBKR_MOCK=true
+// (npm run dev:demo), or routed to the real paper account when IBKR_MOCK=false &&
+// IBKR_PAPER=true (npm run dev:demo-paper). DEMO_MODE only controls market data, not IBKR.
 export const DEMO_MODE  = process.env.DEMO_MODE   === "true";
 
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json };
@@ -16,17 +18,21 @@ async function req(
   return new Promise((resolve, reject) => {
     const url = new URL(GATEWAY + path);
     const isHttps = url.protocol === "https:";
-    const body = opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
+    const method = opts.method ?? "GET";
+    // The gateway rejects bodyless POSTs that omit Content-Length with 411,
+    // so always send an explicit Content-Length on non-GET requests (0 = empty).
+    const body =
+      opts.body !== undefined ? JSON.stringify(opts.body) : method === "GET" ? undefined : "";
 
     const options: https.RequestOptions = {
       hostname: url.hostname,
       port: parseInt(url.port) || (isHttps ? 443 : 80),
       path: url.pathname + url.search,
-      method: opts.method ?? "GET",
+      method,
       headers: {
         "Content-Type": "application/json",
         "User-Agent": "PortfolioLens/1.0",
-        ...(body ? { "Content-Length": Buffer.byteLength(body) } : {}),
+        ...(body !== undefined ? { "Content-Length": Buffer.byteLength(body) } : {}),
       },
       rejectUnauthorized: false,
     };
@@ -44,7 +50,7 @@ async function req(
       });
     });
     r.on("error", reject);
-    if (body) r.write(body);
+    if (body) r.write(body); // Content-Length:0 is already set for empty bodies
     r.end();
   });
 }
@@ -79,8 +85,16 @@ export interface OrderResult {
 // ── API ────────────────────────────────────────────────────────────────────
 
 export async function getAuthStatus(): Promise<AuthStatus> {
-  const res = await req("/v1/api/iserver/auth/status");
+  // auth/status is documented as POST; a fresh browser SSO login is only
+  // reflected reliably when queried via POST.
+  const res = await req("/v1/api/iserver/auth/status", { method: "POST" });
   return res.data as unknown as AuthStatus;
+}
+
+// Validates the SSO session created by the browser login. Required to turn a
+// web login into an authenticated brokerage session before /reauthenticate.
+export async function ssoValidate(): Promise<void> {
+  await req("/v1/api/sso/validate");
 }
 
 export async function tickle(): Promise<void> {

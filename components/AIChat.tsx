@@ -5,21 +5,73 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage, Company } from "@/types";
 import { readStream } from "@/lib/streaming";
+import { reportTokens } from "@/lib/tokenUsage";
 
 interface Props {
   companies: Company[];
   onClose: () => void;
 }
 
+// Single shared conversation, persisted across markets (US and ASX alike).
+const CHAT_STORAGE_KEY = "portfolio-ai-chat";
+
+// Persistent "still working" indicator — stays visible for the whole stream,
+// including the silent gaps while the model is running tools, so a paused
+// reply never looks finished.
+function WorkingDots() {
+  return (
+    <span className="mt-1.5 flex items-center gap-1" aria-label="Assistant is working">
+      {[0, 150, 300].map((delay) => (
+        <span
+          key={delay}
+          className="h-1.5 w-1.5 rounded-full bg-gray-500 animate-bounce"
+          style={{ animationDelay: `${delay}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
+function loadMessages(): ChatMessage[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(CHAT_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ChatMessage[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function AIChat({ companies, onClose }: Props) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => loadMessages());
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Persist the conversation, but never persist a half-finished streamed reply.
+  useEffect(() => {
+    if (typeof window === "undefined" || streaming) return;
+    try {
+      if (messages.length === 0) {
+        window.localStorage.removeItem(CHAT_STORAGE_KEY);
+      } else {
+        window.localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(messages));
+      }
+    } catch {
+      // Ignore quota / serialization failures — persistence is best-effort.
+    }
+  }, [messages, streaming]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  function handleClear() {
+    if (streaming) return;
+    setMessages([]);
+  }
 
   async function handleSend() {
     const text = input.trim();
@@ -50,7 +102,7 @@ export default function AIChat({ companies, onClose }: Props) {
           };
           return updated;
         });
-      });
+      }, (i, o, c) => reportTokens(i, o, c));
     } catch {
       setMessages((prev) => {
         const updated = [...prev];
@@ -77,12 +129,24 @@ export default function AIChat({ companies, onClose }: Props) {
           <h3 className="text-sm font-bold text-white">Portfolio AI</h3>
           <p className="text-xs text-gray-500">Scores · technicals · quant factors</p>
         </div>
-        <button
-          onClick={onClose}
-          className="rounded-full p-1.5 text-gray-500 hover:bg-gray-800 hover:text-white"
-        >
-          ✕
-        </button>
+        <div className="flex items-center gap-1">
+          {messages.length > 0 && (
+            <button
+              onClick={handleClear}
+              disabled={streaming}
+              title="Clear conversation"
+              className="rounded-full px-2 py-1 text-xs text-gray-500 hover:bg-gray-800 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Clear
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="rounded-full p-1.5 text-gray-500 hover:bg-gray-800 hover:text-white"
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
@@ -117,29 +181,32 @@ export default function AIChat({ companies, onClose }: Props) {
             >
               {msg.content ? (
                 msg.role === "assistant" ? (
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      h1: ({ children }) => <p className="font-bold text-white mt-2 mb-1">{children}</p>,
-                      h2: ({ children }) => <p className="font-bold text-white mt-2 mb-1">{children}</p>,
-                      h3: ({ children }) => <p className="font-semibold text-gray-200 mt-1.5 mb-0.5">{children}</p>,
-                      p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
-                      strong: ({ children }) => <span className="font-semibold text-white">{children}</span>,
-                      em: ({ children }) => <span className="italic text-gray-400">{children}</span>,
-                      ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 my-1">{children}</ul>,
-                      ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 my-1">{children}</ol>,
-                      li: ({ children }) => <li className="text-gray-300">{children}</li>,
-                      hr: () => <hr className="border-gray-600 my-2" />,
-                      blockquote: ({ children }) => <blockquote className="border-l-2 border-indigo-400 pl-2 text-gray-400 my-1">{children}</blockquote>,
-                      code: ({ children }) => <code className="bg-gray-700 rounded px-1 font-mono">{children}</code>,
-                      table: ({ children }) => <div className="overflow-x-auto my-2"><table className="w-full border-collapse text-xs">{children}</table></div>,
-                      thead: ({ children }) => <thead className="border-b border-gray-600">{children}</thead>,
-                      th: ({ children }) => <th className="text-left py-1 pr-3 text-gray-400 font-semibold">{children}</th>,
-                      td: ({ children }) => <td className="py-1 pr-3 text-gray-300 border-b border-gray-700/50">{children}</td>,
-                    }}
-                  >
-                    {msg.content}
-                  </ReactMarkdown>
+                  <>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        h1: ({ children }) => <p className="font-bold text-white mt-2 mb-1">{children}</p>,
+                        h2: ({ children }) => <p className="font-bold text-white mt-2 mb-1">{children}</p>,
+                        h3: ({ children }) => <p className="font-semibold text-gray-200 mt-1.5 mb-0.5">{children}</p>,
+                        p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
+                        strong: ({ children }) => <span className="font-semibold text-white">{children}</span>,
+                        em: ({ children }) => <span className="italic text-gray-400">{children}</span>,
+                        ul: ({ children }) => <ul className="list-disc list-inside space-y-0.5 my-1">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal list-inside space-y-0.5 my-1">{children}</ol>,
+                        li: ({ children }) => <li className="text-gray-300">{children}</li>,
+                        hr: () => <hr className="border-gray-600 my-2" />,
+                        blockquote: ({ children }) => <blockquote className="border-l-2 border-indigo-400 pl-2 text-gray-400 my-1">{children}</blockquote>,
+                        code: ({ children }) => <code className="bg-gray-700 rounded px-1 font-mono">{children}</code>,
+                        table: ({ children }) => <div className="overflow-x-auto my-2"><table className="w-full border-collapse text-xs">{children}</table></div>,
+                        thead: ({ children }) => <thead className="border-b border-gray-600">{children}</thead>,
+                        th: ({ children }) => <th className="text-left py-1 pr-3 text-gray-400 font-semibold">{children}</th>,
+                        td: ({ children }) => <td className="py-1 pr-3 text-gray-300 border-b border-gray-700/50">{children}</td>,
+                      }}
+                    >
+                      {msg.content}
+                    </ReactMarkdown>
+                    {streaming && i === messages.length - 1 && <WorkingDots />}
+                  </>
                 ) : (
                   msg.content
                 )

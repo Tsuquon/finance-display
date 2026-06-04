@@ -2,16 +2,53 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import PortfolioDashboard from "./PortfolioDashboard";
+import PortfolioDashboard, { CUSTOM_KEY } from "./PortfolioDashboard";
 import {
   loadPortfolios,
+  loadCustomCompanies,
   persistPortfolios,
   type SavedPortfolio,
   type InvestmentRecord,
   type InvestedPosition,
 } from "@/lib/portfolios";
+import type { Company } from "@/types";
 import PortfolioPnLChart from "./PortfolioPnLChart";
-import TradingEngine from "./TradingEngine";
+import DataFreshness from "./DataFreshness";
+
+// Hand-off key written by the backtest trainer ("Create as Custom Portfolio").
+const TRAINER_DRAFT_KEY = "finance-trainer-draft";
+
+interface TrainerDraft {
+  portfolioSize: string;
+  customAmounts: Record<string, number>;
+  companies: Company[];
+}
+
+// Back-fill real name + AI classification for trainer-seeded skeleton records
+// (ticker only). Best-effort and sequential to stay gentle on the API; each ticker
+// is replaced in place in localStorage as it resolves, preserving the strategy's
+// category and the skeleton's id. Failures leave the skeleton untouched.
+async function enrichSeededCompanies(seeds: Company[]) {
+  for (const seed of seeds) {
+    try {
+      const existing: Company[] = loadCustomCompanies();
+      const res = await fetch("/api/companies/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: seed.ticker, existingIds: existing.map((c) => c.id) }),
+      });
+      if (!res.ok) continue;
+      const full: Company = await res.json();
+      // Re-read in case other tickers wrote concurrently, then replace in place.
+      const current: Company[] = loadCustomCompanies();
+      const enriched: Company = { ...full, id: seed.id, category: seed.category };
+      const idx = current.findIndex((c) => c.ticker === seed.ticker);
+      if (idx >= 0) current[idx] = enriched;
+      else current.push(enriched);
+      localStorage.setItem(CUSTOM_KEY, JSON.stringify(current));
+    } catch { /* leave the skeleton in place for this ticker */ }
+  }
+}
 
 const MODE_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   aggressive:   { bg: "bg-red-900/30",    text: "text-red-400",    label: "Aggressive"    },
@@ -61,9 +98,36 @@ export default function PortfolioHome() {
   const [ibkrNeedsLogin, setIbkrNeedsLogin] = useState(false);
   const [ibkrGateway, setIbkrGateway]       = useState(false);
   const [pnlMap, setPnlMap]           = useState<Record<string, PnLResult>>({});
+  const [draftCustom, setDraftCustom] = useState<{ customAmounts: Record<string, number>; portfolioSize: string } | null>(null);
 
   useEffect(() => {
     setPortfolios(loadPortfolios());
+  }, []);
+
+  // Pick up a portfolio handed off from the backtest trainer, if any.
+  useEffect(() => {
+    let draft: TrainerDraft | null = null;
+    try {
+      const raw = localStorage.getItem(TRAINER_DRAFT_KEY);
+      if (raw) draft = JSON.parse(raw) as TrainerDraft;
+    } catch { draft = null; }
+    if (!draft) return;
+    localStorage.removeItem(TRAINER_DRAFT_KEY); // consume once
+
+    // Seed the trained tickers into the custom-companies store so every position
+    // renders in the dashboard's custom universe (deduped by ticker). The trainer
+    // only knows ticker + category, so these start as skeleton records — we seed
+    // them immediately (nothing lost) then enrich each in the background below.
+    try {
+      const existing: Company[] = loadCustomCompanies();
+      const have = new Set(existing.map((c) => c.ticker));
+      const newOnes = draft.companies.filter((c) => !have.has(c.ticker));
+      localStorage.setItem(CUSTOM_KEY, JSON.stringify([...existing, ...newOnes]));
+      if (newOnes.length) void enrichSeededCompanies(newOnes);
+    } catch { /* non-fatal — dashboard fetch still populates most tickers */ }
+
+    setDraftCustom({ customAmounts: draft.customAmounts, portfolioSize: draft.portfolioSize });
+    openSheet(null);
   }, []);
 
   // Check IBKR connection — polls fast when waiting for login, slow once connected
@@ -123,6 +187,7 @@ export default function PortfolioHome() {
 
   function closeSheet() {
     setSheetOpen(false);
+    setDraftCustom(null); // discard any trainer hand-off draft
     setTimeout(() => setSheetMounted(false), 460);
   }
 
@@ -175,6 +240,9 @@ export default function PortfolioHome() {
         </div>
         <div className="flex-1" />
 
+        {/* Data freshness — how up to date the AI scores & market data are */}
+        <DataFreshness />
+
         {/* IBKR status */}
         {ibkrConnected === null ? (
           <div className="flex items-center gap-1.5 text-xs text-gray-600">
@@ -184,7 +252,11 @@ export default function PortfolioHome() {
         ) : ibkrConnected ? (
           <div className="flex items-center gap-1.5 text-xs text-gray-400">
             <div className="h-2 w-2 rounded-full bg-emerald-400" />
-            {ibkrDemo ? "Demo Mode" : ibkrMock ? "IBKR Mock" : ibkrPaper ? "IBKR Paper" : "IBKR Live"}
+            {ibkrMock
+              ? ibkrDemo ? "Demo Mode" : "IBKR Mock"
+              : ibkrDemo
+                ? ibkrPaper ? "Demo · Paper" : "Demo · Live"
+                : ibkrPaper ? "IBKR Paper" : "IBKR Live"}
           </div>
         ) : ibkrNeedsLogin ? (
           <a
@@ -203,6 +275,18 @@ export default function PortfolioHome() {
           </div>
         )}
 
+        <Link
+          href="/alerts"
+          className="text-xs text-gray-500 hover:text-white transition-colors flex items-center gap-1"
+        >
+          Alerts →
+        </Link>
+        <Link
+          href="/backtest"
+          className="text-xs text-gray-500 hover:text-white transition-colors flex items-center gap-1"
+        >
+          Backtest →
+        </Link>
         <Link
           href="/market"
           className="text-xs text-gray-500 hover:text-white transition-colors flex items-center gap-1"
@@ -384,10 +468,6 @@ export default function PortfolioHome() {
             </div>
           )}
 
-          {/* AI Trading Engine */}
-          <div className="border-t border-gray-800 pt-8">
-            <TradingEngine />
-          </div>
         </div>
       </main>
 
@@ -397,22 +477,7 @@ export default function PortfolioHome() {
           positions={chartPortfolio.investment.positions}
           investedAt={chartPortfolio.investment.investedAt}
           totalInvested={chartPortfolio.investment.totalInvested}
-          isMock={ibkrMock}
-          snapshot={chartPortfolio.snapshot}
-          portfolioSize={chartPortfolio.portfolioSize}
           onClose={() => setChartPortfolio(null)}
-          onInvestedAtChange={(ms) => {
-            const id = chartPortfolio.id;
-            setPortfolios((prev) => {
-              const updated = prev.map((p) =>
-                p.id === id && p.investment
-                  ? { ...p, investment: { ...p.investment, investedAt: ms } }
-                  : p
-              );
-              persistPortfolios(updated);
-              return updated;
-            });
-          }}
           onPnlChange={(result) => {
             setPnlMap((prev) => ({ ...prev, [chartPortfolio.id]: result }));
           }}
@@ -442,6 +507,7 @@ export default function PortfolioHome() {
               <PortfolioDashboard
                 sheetMode
                 initial={active ?? undefined}
+                draftCustom={active ? undefined : draftCustom ?? undefined}
                 onClose={closeSheet}
                 onSaved={handleSaved}
                 onInvested={handleInvested}

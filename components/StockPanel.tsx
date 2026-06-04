@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import type { Company, Signal, StockDataPoint, TimeRange } from "@/types";
 import { cats } from "@/data/categories";
+import { currencySymbol } from "@/lib/currency";
 import SignalItem from "./SignalItem";
 import TradeWidget from "./TradeWidget";
 import AIAnalysis from "./AIAnalysis";
@@ -39,6 +40,7 @@ export default function StockPanel({ company, onClose }: Props) {
   const rangeRef = useRef(range);
   rangeRef.current = range;
   const cat = cats[company.category];
+  const cur = currencySymbol(company.ticker);
 
   useEffect(() => {
     setSignalsLoading(true);
@@ -100,15 +102,15 @@ export default function StockPanel({ company, onClose }: Props) {
             <span className={`text-sm font-mono ${cat.accent}`}>{company.ticker}</span>
           </div>
           <div className="text-right">
-            <div className="text-2xl font-bold font-mono text-white">${currentPrice.toFixed(2)}</div>
+            <div className="text-2xl font-bold font-mono text-white">{cur}{currentPrice.toFixed(2)}</div>
             <div className={`text-sm font-semibold ${isPositive ? "text-emerald-400" : "text-red-400"}`}>
-              {isPositive ? "+" : ""}${change.toFixed(2)} ({isPositive ? "+" : ""}{changePct.toFixed(2)}%)
+              {isPositive ? "+" : ""}{cur}{change.toFixed(2)} ({isPositive ? "+" : ""}{changePct.toFixed(2)}%)
             </div>
             {company.dividendYield != null && company.dividendYield > 0 ? (
               <div className="mt-0.5 text-xs text-green-400 font-mono">
                 Div {(company.dividendYield * 100).toFixed(2)}%
                 {company.dividendRate != null && (
-                  <span className="text-gray-500 ml-1">(${company.dividendRate.toFixed(2)}/yr)</span>
+                  <span className="text-gray-500 ml-1">({cur}{company.dividendRate.toFixed(2)}/yr)</span>
                 )}
               </div>
             ) : (
@@ -177,10 +179,10 @@ export default function StockPanel({ company, onClose }: Props) {
                     interval={range === "1H" ? 9 : range === "1W" ? 12 : "preserveStartEnd"}
                     tickFormatter={range === "1W" ? (v: string) => v.split(" ")[0] : undefined}
                   />
-                  <YAxis tick={{ fontSize: 9, fill: "#6b7280" }} tickLine={false} axisLine={false} domain={["auto", "auto"]} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
+                  <YAxis tick={{ fontSize: 9, fill: "#6b7280" }} tickLine={false} axisLine={false} domain={["auto", "auto"]} tickFormatter={(v: number) => `${cur}${v.toFixed(0)}`} />
                   <Tooltip
                     contentStyle={{ background: "#111827", border: `1px solid ${cat.color}33`, borderRadius: 8, fontSize: 11 }}
-                    formatter={(v) => [`$${Number(v).toFixed(2)}`, "Price"]}
+                    formatter={(v) => [`${cur}${Number(v).toFixed(2)}`, "Price"]}
                   />
                   <Area type="monotone" dataKey="price" stroke={cat.color} strokeWidth={2} fill={`url(#grad-${company.id})`} dot={false} />
                 </AreaChart>
@@ -228,7 +230,7 @@ export default function StockPanel({ company, onClose }: Props) {
         </div>
 
         {/* News */}
-        <NewsSection ticker={company.ticker} />
+        <NewsSection ticker={company.ticker} name={company.name} />
 
         {/* Trade */}
         <TradeWidget company={company} currentPrice={currentPrice} />

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthStatus, tickle, reauthenticate, PAPER_MODE, MOCK_MODE, DEMO_MODE } from "@/lib/ibkr";
+import { getAuthStatus, tickle, reauthenticate, ssoValidate, PAPER_MODE, MOCK_MODE, DEMO_MODE } from "@/lib/ibkr";
 
 export async function GET() {
   if (MOCK_MODE) {
@@ -17,12 +17,18 @@ export async function GET() {
   }
 
   try {
+    // A /tickle initializes the brokerage session after a browser login.
+    await tickle().catch(() => {});
     let status = await getAuthStatus();
+
+    // Fresh browser SSO logins report authenticated:false until the session is
+    // validated and the brokerage session is (re)established. Run IBKR's
+    // documented recovery sequence, then re-check.
     if (!status.authenticated) {
+      await ssoValidate().catch(() => {});
       await reauthenticate().catch(() => {});
       status = await getAuthStatus();
     }
-    if (status.authenticated) await tickle().catch(() => {});
 
     return NextResponse.json({
       connected: !!(status.authenticated && status.connected),
@@ -30,6 +36,7 @@ export async function GET() {
       competing: status.competing,
       message: status.message,
       paper: PAPER_MODE,
+      demo: DEMO_MODE,
       gatewayReachable: true,
       needsLogin: !status.authenticated,
     });
@@ -39,6 +46,7 @@ export async function GET() {
       gatewayReachable: false,
       needsLogin: false,
       paper: PAPER_MODE,
+      demo: DEMO_MODE,
     }, { status: 503 });
   }
 }

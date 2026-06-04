@@ -19,7 +19,11 @@ export default function QuantScore({ company }: { company: Company }) {
   useEffect(() => {
     setLoading(true);
     setResult(null);
-    fetch("/api/companies")
+    // The quant score is a relative rank within a market's universe, so fetch the
+    // peer set for this company's market (".AX" = ASX). Using the US universe for
+    // an ASX ticker leaves it absent from the scores → "Unable to score".
+    const market = company.ticker.endsWith(".AX") ? "au" : "us";
+    fetch(`/api/companies?market=${market}`)
       .then((r) => r.json() as Promise<Company[]>)
       .then((companies) =>
         fetch("/api/quant", {

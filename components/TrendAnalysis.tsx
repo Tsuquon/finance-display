@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import type { TechnicalResult, SignalLevel, TrendDir } from "@/lib/technicalAnalysis";
+import { currencySymbol } from "@/lib/currency";
 
 const SIGNAL_STYLE: Record<SignalLevel, { label: string; bg: string; text: string }> = {
   "strong-buy":  { label: "Strong Buy",  bg: "bg-emerald-500/20", text: "text-emerald-400" },
@@ -36,15 +37,28 @@ export default function TrendAnalysis({ ticker }: { ticker: string }) {
   const [result, setResult] = useState<TechnicalResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const cur = currencySymbol(ticker);
 
   useEffect(() => {
-    setLoading(true);
-    setResult(null);
-    setError(false);
-    fetch(`/api/analysis/${ticker}`)
-      .then((r) => r.json())
-      .then((data) => { setResult(data); setLoading(false); })
-      .catch(() => { setError(true); setLoading(false); });
+    let cancelled = false;
+
+    const load = (showSpinner: boolean) => {
+      if (showSpinner) {
+        setLoading(true);
+        setResult(null);
+        setError(false);
+      }
+      fetch(`/api/analysis/${ticker}`)
+        .then((r) => r.json())
+        .then((data) => { if (!cancelled) { setResult(data); setLoading(false); setError(false); } })
+        .catch(() => { if (!cancelled && showSpinner) { setError(true); setLoading(false); } });
+    };
+
+    load(true);
+    // Refresh every minute while the panel is open (server caches for 60s)
+    const id = setInterval(() => load(false), 60 * 1000);
+
+    return () => { cancelled = true; clearInterval(id); };
   }, [ticker]);
 
   return (
@@ -84,14 +98,14 @@ export default function TrendAnalysis({ ticker }: { ticker: string }) {
                 <p className="text-xs text-gray-500">Support</p>
                 <span className="text-xs text-emerald-700">tested {result.support.strength}×</span>
               </div>
-              <p className="text-sm font-mono font-bold text-emerald-400">${result.support.price.toFixed(2)}</p>
+              <p className="text-sm font-mono font-bold text-emerald-400">{cur}{result.support.price.toFixed(2)}</p>
             </div>
             <div className="rounded-lg border border-red-800/40 bg-red-950/30 px-3 py-2">
               <div className="flex items-center justify-between">
                 <p className="text-xs text-gray-500">Resistance</p>
                 <span className="text-xs text-red-700">tested {result.resistance.strength}×</span>
               </div>
-              <p className="text-sm font-mono font-bold text-red-400">${result.resistance.price.toFixed(2)}</p>
+              <p className="text-sm font-mono font-bold text-red-400">{cur}{result.resistance.price.toFixed(2)}</p>
             </div>
           </div>
 

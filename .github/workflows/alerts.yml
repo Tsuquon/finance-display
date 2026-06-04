@@ -1,0 +1,43 @@
+name: Stock alerts
+
+# Headless alert checker. Runs in GitHub's cloud on a schedule, evaluates every
+# active alert directly against Neon + Yahoo, and pushes/emails any that fire.
+# The dashboard never needs to be hosted anywhere — only this cron does.
+
+on:
+  schedule:
+    # Every 30 minutes. Cron is UTC; GitHub may delay runs under load.
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {} # lets you trigger a run by hand from the Actions tab
+
+# Don't pile up overlapping runs if one is slow.
+concurrency:
+  group: stock-alerts
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Evaluate alerts
+        run: npm run alerts:check
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DEMO_MODE: "true" # force live Yahoo data (CI NODE_ENV is not production)
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Optional email fallback — leave unset to use Telegram only.
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}

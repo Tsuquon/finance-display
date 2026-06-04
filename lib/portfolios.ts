@@ -1,4 +1,25 @@
+import type { Company } from "@/types";
+
 export const PORTFOLIOS_KEY = "finance-saved-portfolios";
+export const CUSTOM_COMPANIES_KEY = "finance-custom-companies";
+export const CUSTOM_COMPANIES_KEY_AU = "finance-custom-companies-au";
+
+/**
+ * Safely read the user's custom companies from localStorage.
+ * Returns [] (and clears the key) if the stored value is missing or corrupt,
+ * so a bad localStorage entry can never throw and brick a loading effect.
+ * Pass a market-scoped `key` to keep US and AU custom lists separate.
+ */
+export function loadCustomCompanies(key: string = CUSTOM_COMPANIES_KEY): Company[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    try { localStorage.removeItem(key); } catch { /* ignore */ }
+    return [];
+  }
+}
 
 export type Mode = "aggressive" | "balanced" | "conservative" | "momentum" | "value" | "growth" | "income" | "custom";
 
