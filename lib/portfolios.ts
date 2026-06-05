@@ -4,6 +4,36 @@ export const PORTFOLIOS_KEY = "finance-saved-portfolios";
 export const CUSTOM_COMPANIES_KEY = "finance-custom-companies";
 export const CUSTOM_COMPANIES_KEY_AU = "finance-custom-companies-au";
 
+// The exact company list the Dashboard is currently displaying. The US feed is a
+// LIVE, capped "most actives" screener that rotates throughout the day, so two
+// independent fetches (Dashboard vs. chat) can legitimately return different
+// universes — a stock you can see in the Dashboard may be absent from the chat's
+// own fetch, making the AI claim it "isn't in this portfolio". Publishing the
+// Dashboard's authoritative list here and having the chat merge it in gives both
+// a single source of truth so they can never disagree.
+export const ACTIVE_UNIVERSE_KEY = "finance-active-universe";
+
+/** Persist the Dashboard's currently-displayed company list for the chat to read. */
+export function publishActiveUniverse(companies: Company[]) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(ACTIVE_UNIVERSE_KEY, JSON.stringify(companies));
+  } catch {
+    /* ignore quota/serialization failures — this is a best-effort hint */
+  }
+}
+
+/** Read the Dashboard's last-published company list (empty if it never loaded). */
+export function loadActiveUniverse(): Company[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ACTIVE_UNIVERSE_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Safely read the user's custom companies from localStorage.
  * Returns [] (and clears the key) if the stored value is missing or corrupt,

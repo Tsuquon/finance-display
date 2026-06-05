@@ -18,13 +18,16 @@ Pre-loaded context per company:
 - Analyst research summary
 - Market fundamentals (US tickers sourced from Finnhub, ASX/".AX" from Yahoo): valuation (P/E, P/B, P/S), margins, growth, balance-sheet health, dividend, and — when available — PEG, EV/EBITDA, and analyst targets. Some fields (forward P/E, PEG, EV/EBITDA, analyst price targets, cash-flow figures, next earnings date) are not available for US tickers on the current data tier and will show as "—"; treat a "—" as missing, not zero, and don't claim to fetch it.
 
-On-demand tools:
+On-demand tools (these work for ANY ticker — not only the pre-loaded list):
 - get_company_statistics(ticker) — full fundamentals snapshot for one stock (every available metric, plus profile). Use when fundamentals aren't pre-loaded for that ticker, or the user asks about a metric not shown above.
 - get_technical_analysis(ticker) — composite bull/bear score, trend, RSI, MACD, moving averages, support/resistance
-- get_quant_scores() — percentile rankings vs portfolio universe for value, quality, momentum, growth, low-volatility factors
+- get_quant_scores(ticker?) — percentile rankings vs the portfolio universe for value, quality, momentum, growth, low-volatility factors. Pass a ticker to fold a specific stock into the ranking if it isn't already there.
 - get_news(ticker) — most recent Yahoo Finance headlines (title, publisher, time, link) for one stock
+- get_ipo_calendar(filter?) — upcoming and recently-priced US IPO listings (date, symbol, company, exchange, price/range, deal size, status). Use for questions about IPOs, new listings, debuts, or what's going public. Pass filter 'upcoming', 'recent', or 'all' (default 'all').
 
-Default to pre-loaded data for thesis, outlook, valuation, and signal questions. Invoke get_company_statistics for deeper fundamental detail, get_technical_analysis for chart patterns / price momentum / technical setups, get_quant_scores for cross-portfolio factor rankings, and get_news for current headlines, catalysts, or "why did it move" questions. When citing news, reference the headline and publisher.
+The pre-loaded portfolio below is a live, rotating "most-actives" feed, so it is NOT the full set of stocks you can analyze. If the user asks about a ticker that isn't pre-loaded, do NOT refuse or claim it "isn't in the portfolio" — just call the relevant tool to fetch it live (get_company_statistics / get_technical_analysis / get_news, and get_quant_scores with that ticker for factor ranking). Only fall back to "data unavailable" if a tool itself returns no data.
+
+Default to pre-loaded data for thesis, outlook, valuation, and signal questions on stocks that are present. Invoke get_company_statistics for deeper fundamental detail, get_technical_analysis for chart patterns / price momentum / technical setups, get_quant_scores for cross-portfolio factor rankings, and get_news for current headlines, catalysts, or "why did it move" questions. When citing news, reference the headline and publisher.
 
 Alerts:
 - When the user asks to be notified, alerted, or emailed about a stock condition (e.g. "tell me when NVDA drops below $100", "alert me if TSLA's RSI goes above 70", "let me know when there's news on AAPL"), call create_alert. Map the request to the correct kind/field/operator/value and write a concise description. Confirm in one line what you set up. The condition is checked in the background while the app is open and the user is emailed once when it fires.
@@ -114,22 +117,42 @@ const TOOLS: Anthropic.Messages.Tool[] = [
   {
     name: "get_quant_scores",
     description:
-      "Fetch quantitative factor scores (0-100 percentile vs portfolio universe) for all portfolio stocks. Factors: value (P/E, P/B, EV/EBITDA, FCF yield), quality (ROE, ROA, gross margin, debt/equity), momentum (12-1m return), growth (revenue and EPS growth), low_volatility (beta). Use when the user asks about factor rankings, which stocks screen best quantitatively, or value vs growth comparisons.",
+      "Fetch quantitative factor scores (0-100 percentile vs portfolio universe) for all portfolio stocks. Factors: value (P/E, P/B, EV/EBITDA, FCF yield), quality (ROE, ROA, gross margin, debt/equity), momentum (12-1m return), growth (revenue and EPS growth), low_volatility (beta). Use when the user asks about factor rankings, which stocks screen best quantitatively, or value vs growth comparisons. Pass the optional 'ticker' to rank a specific stock the user named even if it isn't currently in the portfolio universe — it will be added to the ranking.",
     input_schema: {
       type: "object" as const,
-      properties: {},
+      properties: {
+        ticker: {
+          type: "string",
+          description: "Optional uppercase ticker to ensure is included in the ranking, e.g. MU. Omit to score only the existing portfolio.",
+        },
+      },
     },
   },
   {
     name: "get_news",
     description:
-      "Fetch the most recent news headlines for a portfolio stock from Yahoo Finance. Returns article titles, publishers, publish times, and links. Use when the user asks what's happening with a stock, recent news/catalysts, or why it moved. Prefer this over the pre-loaded signals when the user wants current headlines.",
+      "Fetch the most recent news headlines for any stock from Yahoo Finance. Returns article titles, publishers, publish times, and links. Use when the user asks what's happening with a stock, recent news/catalysts, or why it moved. Prefer this over the pre-loaded signals when the user wants current headlines.",
     input_schema: {
       type: "object" as const,
       properties: {
         ticker: { type: "string", description: "Uppercase stock ticker symbol, e.g. NVDA" },
       },
       required: ["ticker"],
+    },
+  },
+  {
+    name: "get_ipo_calendar",
+    description:
+      "Fetch the US IPO calendar from Finnhub: upcoming/expected IPOs and recently-priced listings. Each entry has the date, ticker symbol, company name, exchange, offer price (a single price or a low-high range), deal size in dollars, and status (expected/priced/withdrawn/filed). Use whenever the user asks about IPOs, new or upcoming listings, recent market debuts, or what companies are going public. Covers roughly the last 30 days through the next 45 days.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        filter: {
+          type: "string",
+          enum: ["upcoming", "recent", "all"],
+          description: "Which listings to return: 'upcoming' (today onward), 'recent' (already listed), or 'all' (both). Defaults to 'all'.",
+        },
+      },
     },
   },
   {
@@ -142,7 +165,7 @@ const TOOLS: Anthropic.Messages.Tool[] = [
       "- kind 'news': field 'news', no operator/value. By default fires on any new article. If the user only cares about a certain kind of news (e.g. 'important news', 'earnings', 'M&A or guidance changes', 'analyst upgrades'), pass that intent as 'criteria' — an AI then judges each new headline against it and only emails worthy ones. Omit 'criteria' when the user wants every headline.\n" +
       "- kind 'ai' (smart/holistic): field 'ai', no operator/value. Use this when the condition is qualitative, combines multiple signals, or can't be reduced to one numeric threshold (e.g. 'when NVDA looks overbought and momentum is fading', 'if TSLA's fundamentals and technicals both point to a pullback', 'when sentiment turns negative'). Put the FULL natural-language condition in 'criteria'. On each check, an AI weighs the ticker's live price, AI scores, technicals, and recent news against that condition and only emails if it's satisfied.\n" +
       "Prefer a specific kind (price/score/technical) when there is one clear numeric threshold; use 'ai' for multi-factor or qualitative conditions.\n" +
-      "Always pass a concise human-readable 'description' (e.g. 'NVDA drops below $100', 'Material news on AAPL', 'NVDA overbought + fading momentum'). Only use tickers in the portfolio.",
+      "Always pass a concise human-readable 'description' (e.g. 'NVDA drops below $100', 'Material news on AAPL', 'NVDA overbought + fading momentum'). Works for any ticker — it does not have to be in the pre-loaded portfolio.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -252,8 +275,9 @@ export async function POST(req: NextRequest) {
     try {
       if (name === "get_company_statistics") {
         const ticker = String(input.ticker ?? "").toUpperCase();
-        if (!tickers.includes(ticker)) return `${ticker} is not in this portfolio.`;
+        if (!ticker) return "No ticker provided.";
         // Fetches live (US via Finnhub, ASX via Yahoo) + persists to the DB if not already cached/fresh.
+        // Works for ANY ticker the user names, not just the current rotating feed.
         const map = await getStockStatistics([ticker]);
         const s = map[ticker];
         if (!s) return `Statistics unavailable for ${ticker}.`;
@@ -261,23 +285,31 @@ export async function POST(req: NextRequest) {
       }
       if (name === "get_technical_analysis") {
         const ticker = String(input.ticker ?? "").toUpperCase();
-        if (!tickers.includes(ticker)) return `${ticker} is not in this portfolio.`;
+        if (!ticker) return "No ticker provided.";
         const res = await fetch(`${origin}/api/analysis/${ticker}`);
         if (!res.ok) return `Technical analysis unavailable for ${ticker}.`;
         return JSON.stringify(await res.json(), null, 2);
       }
       if (name === "get_quant_scores") {
+        // Optionally inject a ticker the user asked about so it gets ranked even
+        // when it's outside the current rotating feed. The quant route only needs
+        // the ticker to fetch fundamentals, so a minimal entry suffices.
+        const extra = String(input.ticker ?? "").toUpperCase();
+        const universe =
+          extra && !tickers.includes(extra)
+            ? [...companies, { ticker: extra } as Company]
+            : companies;
         const res = await fetch(`${origin}/api/quant`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ companies }),
+          body: JSON.stringify({ companies: universe }),
         });
         if (!res.ok) return "Quant scores unavailable.";
         return JSON.stringify(await res.json(), null, 2);
       }
       if (name === "get_news") {
         const ticker = String(input.ticker ?? "").toUpperCase();
-        if (!tickers.includes(ticker)) return `${ticker} is not in this portfolio.`;
+        if (!ticker) return "No ticker provided.";
         const company = companies.find((c) => c.ticker.toUpperCase() === ticker);
         const qs = company?.name ? `?name=${encodeURIComponent(company.name)}` : "";
         const res = await fetch(`${origin}/api/news/${encodeURIComponent(ticker)}${qs}`);
@@ -300,9 +332,27 @@ export async function POST(req: NextRequest) {
           2
         );
       }
+      if (name === "get_ipo_calendar") {
+        const filter = String(input.filter ?? "all").toLowerCase();
+        const res = await fetch(`${origin}/api/ipos`);
+        if (!res.ok) return "IPO calendar unavailable.";
+        const data = (await res.json()) as {
+          configured: boolean;
+          upcoming: unknown[];
+          recent: unknown[];
+        };
+        if (!data.configured) return "IPO calendar unavailable — no Finnhub API key is configured.";
+        const out =
+          filter === "upcoming" ? { upcoming: data.upcoming }
+          : filter === "recent" ? { recent: data.recent }
+          : { upcoming: data.upcoming, recent: data.recent };
+        const total = data.upcoming.length + data.recent.length;
+        if (total === 0) return "No IPOs found in the current calendar window.";
+        return JSON.stringify(out, null, 2);
+      }
       if (name === "create_alert") {
         const ticker = String(input.ticker ?? "").toUpperCase();
-        if (!tickers.includes(ticker)) return `${ticker} is not in this portfolio, so no alert was created.`;
+        if (!ticker) return "No ticker provided, so no alert was created.";
         const company = companies.find((c) => c.ticker.toUpperCase() === ticker);
         const { alert, error } = await createAlert({
           ticker,

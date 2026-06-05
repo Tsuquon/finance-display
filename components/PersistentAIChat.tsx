@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import type { Company } from "@/types";
 import {
   loadCustomCompanies,
+  loadActiveUniverse,
   CUSTOM_COMPANIES_KEY,
   CUSTOM_COMPANIES_KEY_AU,
 } from "@/lib/portfolios";
@@ -36,8 +37,14 @@ export default function PersistentAIChat() {
       ...loadCustomCompanies(CUSTOM_COMPANIES_KEY),
       ...loadCustomCompanies(CUSTOM_COMPANIES_KEY_AU),
     ];
-    // Custom tickers first so a user-added entry wins over a feed duplicate.
+    // The Dashboard's currently-displayed list wins first: the US feed is a live
+    // rotating screener, so a stock the user is looking at right now may be absent
+    // from our own us/au fetch below. Merging the published universe in guarantees
+    // the chat never claims a visible stock "isn't in this portfolio". Custom
+    // tickers come next so a user-added entry beats a feed duplicate; the live
+    // both-market fetch fills in anything the (single-market) snapshot lacks.
     const combined = [
+      ...loadActiveUniverse(),
       ...custom,
       ...(Array.isArray(us) ? (us as Company[]) : []),
       ...(Array.isArray(au) ? (au as Company[]) : []),

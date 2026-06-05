@@ -124,11 +124,18 @@ Rules:
     };
   });
 
-  await sql`
-    INSERT INTO market_screener (id, companies, refreshed_at)
-    VALUES (${cacheId}, ${JSON.stringify(companies)}, now())
-    ON CONFLICT (id) DO UPDATE SET companies = EXCLUDED.companies, refreshed_at = now()
-  `;
+  // Best-effort cache write. A DB failure here must NOT 500 the whole feed —
+  // the client falls back to an empty list on error, which would blank the
+  // Dashboard and (worse) destabilize the universe the chat scopes itself to.
+  try {
+    await sql`
+      INSERT INTO market_screener (id, companies, refreshed_at)
+      VALUES (${cacheId}, ${JSON.stringify(companies)}, now())
+      ON CONFLICT (id) DO UPDATE SET companies = EXCLUDED.companies, refreshed_at = now()
+    `;
+  } catch (err) {
+    console.error("market_screener cache write failed", err);
+  }
 
   const totalTokens = (msg.usage.input_tokens ?? 0) + (msg.usage.output_tokens ?? 0);
   return NextResponse.json(companies, {

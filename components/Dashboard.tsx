@@ -6,9 +6,9 @@ import dynamic from "next/dynamic";
 import type { Company } from "@/types";
 import type { BatchScoreMap } from "@/app/api/scores/batch/route";
 import type { QuantScoreMap } from "@/app/api/quant/route";
+import type { CompositeScoreMap } from "@/app/api/scores/composite/route";
 import type { StatisticsMap } from "@/app/api/statistics/route";
-import { cats } from "@/data/categories";
-import { loadCustomCompanies, CUSTOM_COMPANIES_KEY, CUSTOM_COMPANIES_KEY_AU } from "@/lib/portfolios";
+import { loadCustomCompanies, publishActiveUniverse, CUSTOM_COMPANIES_KEY, CUSTOM_COMPANIES_KEY_AU } from "@/lib/portfolios";
 import CompanyCard from "./CompanyCard";
 import NewsTicker from "./NewsTicker";
 import LoadingScreen from "./LoadingScreen";
@@ -16,8 +16,14 @@ import SP500Chart from "./SP500Chart";
 import DataFreshness from "./DataFreshness";
 
 const StockPanel = dynamic(() => import("./StockPanel"), { ssr: false });
+const IpoCalendar = dynamic(() => import("./IpoCalendar"), { ssr: false });
 
 type Market = "us" | "au";
+
+// Top-level view: the stock grid for a market, or the IPO calendar. IPOs aren't
+// a "market" (no screener/sort/movers apply), so they live in a separate view
+// rather than as a third Market value.
+type View = "market" | "ipos";
 
 const MARKETS: { key: Market; label: string }[] = [
   { key: "us", label: "US" },
@@ -39,16 +45,27 @@ const INDEX_FOR: Record<Market, { symbol: string; label: string }> = {
 };
 
 type SortKey =
-  | "default" | "shortTerm" | "longTerm" | "quant"
+  | "default" | "shortTerm" | "longTerm" | "quant" | "composite"
   | "pe" | "volume" | "dividend" | "marketCap";
 
-// Score-based sorts pull from /api/scores/batch or /api/quant; metric-based
-// sorts read the already-loaded /api/statistics snapshot and sort client-side.
-const SCORE_SORTS = new Set<SortKey>(["shortTerm", "longTerm", "quant"]);
+// Score-based sorts pull from /api/scores/batch, /api/quant or
+// /api/scores/composite; metric-based sorts read the already-loaded
+// /api/statistics snapshot and sort client-side.
+const SCORE_SORTS = new Set<SortKey>(["shortTerm", "longTerm", "quant", "composite"]);
 const METRIC_SORTS = new Set<SortKey>(["pe", "volume", "dividend", "marketCap"]);
+
+// Movers filter — keeps the grid flat but lets the user scope to today's
+// gainers / losers by day change instead of partitioning the page.
+type PerfFilter = "all" | "gainers" | "losers";
+const PERF_OPTIONS: { key: PerfFilter; label: string }[] = [
+  { key: "all",     label: "All"     },
+  { key: "gainers", label: "Gainers" },
+  { key: "losers",  label: "Losers"  },
+];
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "default",   label: "Default"    },
+  { key: "composite", label: "Composite"  },
   { key: "shortTerm", label: "Short Term" },
   { key: "longTerm",  label: "Long Term"  },
   { key: "quant",     label: "Quant"      },
@@ -138,6 +155,7 @@ function Divider() {
 
 export default function Dashboard() {
   const [market, setMarket] = useState<Market>("us");
+  const [view, setView] = useState<View>("market");
   // Gate the feed fetch until we've restored the persisted market, so we don't
   // fire a wasted US fetch before switching to the saved (e.g. ASX) tab. Starts
   // as "us" to match SSR and avoid a hydration mismatch on the toggle.
@@ -149,9 +167,14 @@ export default function Dashboard() {
   const [search, setSearch] = useState("");
   const [industry, setIndustry] = useState("All");
 
-  const [sortBy, setSortBy] = useState<SortKey>("default");
+  // Default to the app's blended quality signal so the strongest ideas float to
+  // the top on load, rather than raw (noisy) feed order.
+  const [sortBy, setSortBy] = useState<SortKey>("composite");
+  // Movers filter — narrow the grid to today's gainers or losers by day change.
+  const [perf, setPerf] = useState<PerfFilter>("all");
   const [scores, setScores] = useState<BatchScoreMap>({});
   const [quantScores, setQuantScores] = useState<QuantScoreMap>({});
+  const [compositeScores, setCompositeScores] = useState<CompositeScoreMap>({});
   const [scoresLoading, setScoresLoading] = useState(false);
   const [stats, setStats] = useState<StatisticsMap>({});
   const [statsLoading, setStatsLoading] = useState(false);
@@ -226,6 +249,16 @@ export default function Dashboard() {
       .catch(() => setLoading(false));
   }, [market, marketRestored]);
 
+  // Publish the authoritative displayed universe so the chat reads the exact same
+  // list (see ACTIVE_UNIVERSE_KEY). The US feed rotates live, so without this the
+  // chat's own fetch can miss a stock the user is looking at. Notify an open chat
+  // so it refreshes immediately rather than only on next open.
+  useEffect(() => {
+    if (companies.length === 0) return;
+    publishActiveUniverse(companies);
+    window.dispatchEvent(new Event("portfolio-changed"));
+  }, [companies]);
+
   useEffect(() => {
     // Metric sorts (P/E, volume, dividend, market cap) read the statistics
     // snapshot already in state — no extra fetch needed here.
@@ -240,6 +273,15 @@ export default function Dashboard() {
       })
         .then((r) => r.json())
         .then((data) => { setQuantScores(data); setScoresLoading(false); })
+        .catch(() => setScoresLoading(false));
+    } else if (sortBy === "composite") {
+      fetch("/api/scores/composite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companies }),
+      })
+        .then((r) => r.json())
+        .then((data) => { setCompositeScores(data); setScoresLoading(false); })
         .catch(() => setScoresLoading(false));
     } else {
       fetch("/api/scores/batch", {
@@ -317,6 +359,9 @@ export default function Dashboard() {
   }
 
   function switchMarket(next: Market) {
+    // Coming back from the IPO view re-selects the stock grid even if the
+    // market itself didn't change.
+    setView("market");
     if (next === market) return;
     localStorage.setItem(MARKET_KEY, next);
     // Clear the current market's view before the new feed loads.
@@ -325,9 +370,11 @@ export default function Dashboard() {
     setSelected(null);
     setScores({});
     setQuantScores({});
+    setCompositeScores({});
     setStats({});
     setSearch("");
     setIndustry("All");
+    setPerf("all");
     setMarket(next);
   }
 
@@ -356,15 +403,24 @@ export default function Dashboard() {
         c.ticker.toLowerCase().includes(q) ||
         c.reason.toLowerCase().includes(q);
       const matchIndustry = industry === "All" || c.industry === industry;
-      return matchSearch && matchIndustry;
+      let matchPerf = true;
+      if (perf !== "all") {
+        // Stocks without a day change yet (stats still loading) drop out of the
+        // movers views rather than masquerading as flat.
+        const d = stats[c.ticker]?.dayChangePct;
+        matchPerf = d != null && (perf === "gainers" ? d >= 0 : d < 0);
+      }
+      return matchSearch && matchIndustry && matchPerf;
     });
-  }, [companies, search, industry]);
+  }, [companies, search, industry, perf, stats]);
 
-  const categorized = useMemo(() => {
+  const sorted = useMemo(() => {
     const sortFn = (a: Company, b: Company) => {
       if (sortBy === "default") return 0;
       if (sortBy === "quant")
         return (quantScores[b.ticker]?.score ?? 0) - (quantScores[a.ticker]?.score ?? 0);
+      if (sortBy === "composite")
+        return (compositeScores[b.ticker]?.score ?? 0) - (compositeScores[a.ticker]?.score ?? 0);
       if (METRIC_SORTS.has(sortBy)) {
         const va = metricValue(sortBy, stats[a.ticker]);
         const vb = metricValue(sortBy, stats[b.ticker]);
@@ -378,12 +434,8 @@ export default function Dashboard() {
       const key = sortBy === "shortTerm" ? "st" : "lt";
       return (scores[b.ticker]?.[key] ?? 0) - (scores[a.ticker]?.[key] ?? 0);
     };
-    return {
-      future: filtered.filter((c) => c.category === "future").sort(sortFn),
-      stable: filtered.filter((c) => c.category === "stable").sort(sortFn),
-      fading: filtered.filter((c) => c.category === "fading").sort(sortFn),
-    };
-  }, [filtered, sortBy, scores, quantScores, stats]);
+    return [...filtered].sort(sortFn);
+  }, [filtered, sortBy, scores, quantScores, compositeScores, stats]);
 
   const btnBase = "flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-mono tracking-wide transition-all duration-150 cursor-pointer";
   const btnIdle = "border-gray-800 bg-gray-900/50 text-gray-500 hover:border-gray-700 hover:text-gray-300";
@@ -391,7 +443,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
-      <LoadingScreen visible={loading} />
+      <LoadingScreen visible={loading} tokens={tokensUsed} />
 
       <div className="flex flex-1 min-w-0 flex-col">
         {/* Header */}
@@ -409,14 +461,14 @@ export default function Dashboard() {
 
           <Divider />
 
-          {/* Market tabs — US / ASX */}
+          {/* Market tabs — US / ASX / IPOs */}
           <div className="flex items-center rounded-lg bg-gray-900/80 border border-gray-800/80 p-0.5 gap-px shrink-0">
             {MARKETS.map(({ key, label }) => (
               <button
                 key={key}
                 onClick={() => switchMarket(key)}
                 className={`rounded-md px-3 py-1 text-[11px] font-mono font-semibold tracking-wide transition-all duration-150 ${
-                  market === key
+                  view === "market" && market === key
                     ? "bg-gray-800 text-white shadow-sm"
                     : "text-gray-600 hover:text-gray-400"
                 }`}
@@ -424,6 +476,16 @@ export default function Dashboard() {
                 {label}
               </button>
             ))}
+            <button
+              onClick={() => setView("ipos")}
+              className={`rounded-md px-3 py-1 text-[11px] font-mono font-semibold tracking-wide transition-all duration-150 ${
+                view === "ipos"
+                  ? "bg-gray-800 text-white shadow-sm"
+                  : "text-gray-600 hover:text-gray-400"
+              }`}
+            >
+              IPOs
+            </button>
           </div>
 
           <Divider />
@@ -543,7 +605,8 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {/* Sort bar — segmented control */}
+        {/* Sort bar — segmented control. Hidden on the IPO view (no sorting/movers there). */}
+        {view === "market" && (
         <div className="flex shrink-0 items-center gap-3 border-b border-gray-800/60 bg-gray-950/70 px-5 py-2">
           <span className="text-[10px] font-mono tracking-[0.15em] uppercase text-gray-700 select-none">
             Sort
@@ -572,10 +635,39 @@ export default function Dashboard() {
               );
             })}
           </div>
+
+          {/* Movers filter — gainers / losers by day change */}
+          <span className="text-[10px] font-mono tracking-[0.15em] uppercase text-gray-700 select-none">
+            Movers
+          </span>
+          <div className="flex items-center rounded-lg bg-gray-900/80 border border-gray-800/80 p-0.5 gap-px">
+            {PERF_OPTIONS.map(({ key, label }) => {
+              const active = perf === key;
+              const activeClass =
+                key === "gainers" ? "bg-emerald-950/70 text-emerald-300 shadow-sm"
+                : key === "losers" ? "bg-red-950/70 text-red-300 shadow-sm"
+                : "bg-gray-800 text-white shadow-sm";
+              return (
+                <button
+                  key={key}
+                  onClick={() => setPerf(key)}
+                  className={`rounded-md px-3 py-1 text-[10px] font-mono font-semibold tracking-wide transition-all duration-150 ${
+                    active ? activeClass : "text-gray-600 hover:text-gray-400"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
           <div className="ml-auto flex items-center gap-4">
-            {!loading && search && (
-              <span className="text-[10px] font-mono text-gray-700 tabular-nums">
-                {filtered.length} / {companies.length}
+            {!loading && companies.length > 0 && (
+              <span className="text-[10px] font-mono text-gray-600 tabular-nums">
+                {filtered.length !== companies.length
+                  ? `${filtered.length} / ${companies.length}`
+                  : `${companies.length}`}
+                <span className="ml-1 text-gray-700">stocks</span>
               </span>
             )}
             <DataFreshness
@@ -593,12 +685,30 @@ export default function Dashboard() {
                     .then(setScores)
                     .catch(() => {});
                 }
+                // Composite folds the AI scores in, so refresh it too.
+                if (target === "ai" && sortBy === "composite") {
+                  fetch("/api/scores/composite", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ companies }),
+                  })
+                    .then((r) => r.json())
+                    .then(setCompositeScores)
+                    .catch(() => {});
+                }
               }}
             />
           </div>
         </div>
+        )}
 
-        {/* Company grid */}
+        {/* IPO calendar view */}
+        {view === "ipos" ? (
+          <div className="flex-1 overflow-auto px-5 py-4">
+            <IpoCalendar />
+          </div>
+        ) : (
+        /* Company grid */
         <div className="flex-1 overflow-auto px-5 py-4">
           {marketRestored && <SP500Chart symbol={INDEX_FOR[market].symbol} label={INDEX_FOR[market].label} />}
           {filtered.length === 0 && !loading ? (
@@ -607,59 +717,47 @@ export default function Dashboard() {
               <span className="text-xs font-mono text-gray-600">No companies match your search.</span>
             </div>
           ) : (
-            <div className="grid grid-cols-3 gap-5">
-              {(["future", "stable", "fading"] as const).map((cat) => (
-                <div key={cat}>
-                  {/* Column header */}
-                  <div className="mb-3.5">
-                    <div
-                      className="h-[2px] w-full rounded-full mb-3 opacity-70"
-                      style={{ background: `linear-gradient(90deg, ${cats[cat].color}90, transparent)` }}
-                    />
-                    <div className="flex items-baseline justify-between px-0.5">
-                      <span className={`text-[11px] font-mono font-bold uppercase tracking-[0.14em] ${cats[cat].text}`}>
-                        {cats[cat].label}
-                      </span>
-                      <span className="text-[10px] font-mono text-gray-700 tabular-nums">
-                        {categorized[cat].length}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2.5">
-                    {categorized[cat].map((company) => (
-                      <CompanyCard
-                        key={company.ticker}
-                        company={company}
-                        selected={selected?.ticker === company.ticker}
-                        compact={compact}
-                        sortScore={
-                          sortBy === "shortTerm" ? scores[company.ticker]?.st :
-                          sortBy === "longTerm"  ? scores[company.ticker]?.lt :
-                          sortBy === "quant"     ? quantScores[company.ticker]?.score :
-                          undefined
-                        }
-                        sortLabel={
-                          sortBy === "shortTerm" ? "ST" :
-                          sortBy === "longTerm"  ? "LT" :
-                          sortBy === "quant"     ? "QT" :
-                          undefined
-                        }
-                        sortScoreMax={sortBy === "quant" ? 100 : 10}
-                        sortDisplay={METRIC_SORTS.has(sortBy) ? metricDisplay(sortBy, stats[company.ticker]) : undefined}
-                        onClick={() => {
-                          if (selected?.ticker === company.ticker) { closePanel(); }
-                          else { setPanelVisible(false); setSelected(company); }
-                        }}
-                        onRemove={customTickers.has(company.ticker) ? () => handleRemove(company.ticker) : undefined}
-                      />
-                    ))}
-                  </div>
-                </div>
+            <div
+              className={
+                compact
+                  ? "space-y-2"
+                  : "grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(300px,1fr))]"
+              }
+            >
+              {sorted.map((company) => (
+                <CompanyCard
+                  key={company.ticker}
+                  company={company}
+                  selected={selected?.ticker === company.ticker}
+                  compact={compact}
+                  stat={stats[company.ticker]}
+                  sortScore={
+                    sortBy === "shortTerm" ? scores[company.ticker]?.st :
+                    sortBy === "longTerm"  ? scores[company.ticker]?.lt :
+                    sortBy === "quant"     ? quantScores[company.ticker]?.score :
+                    sortBy === "composite" ? compositeScores[company.ticker]?.score :
+                    undefined
+                  }
+                  sortLabel={
+                    sortBy === "shortTerm" ? "ST" :
+                    sortBy === "longTerm"  ? "LT" :
+                    sortBy === "quant"     ? "QT" :
+                    sortBy === "composite" ? "CS" :
+                    undefined
+                  }
+                  sortScoreMax={sortBy === "quant" || sortBy === "composite" ? 100 : 10}
+                  sortDisplay={METRIC_SORTS.has(sortBy) ? metricDisplay(sortBy, stats[company.ticker]) : undefined}
+                  onClick={() => {
+                    if (selected?.ticker === company.ticker) { closePanel(); }
+                    else { setPanelVisible(false); setSelected(company); }
+                  }}
+                  onRemove={customTickers.has(company.ticker) ? () => handleRemove(company.ticker) : undefined}
+                />
               ))}
             </div>
           )}
         </div>
+        )}
 
         <NewsTicker companies={companies} />
       </div>

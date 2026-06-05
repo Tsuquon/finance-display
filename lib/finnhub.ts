@@ -66,6 +66,66 @@ async function get(path: string, symbol: string): Promise<any | null> {
 }
 
 /**
+ * One IPO from Finnhub's `/calendar/ipo` feed, normalised for the UI. `status`
+ * is Finnhub's lifecycle stage: "expected"/"filed" (upcoming), "priced" (done),
+ * or "withdrawn". `price` is left as Finnhub's raw string ("16.00-18.00" range
+ * or "" when not yet set) since pre-IPO pricing is often a band, not a number.
+ */
+export interface IpoListing {
+  date: string;            // YYYY-MM-DD — expected or priced date
+  symbol: string;
+  name: string;
+  exchange: string | null;
+  price: string | null;    // single price or "lo-hi" band, raw from Finnhub
+  numberOfShares: number | null;
+  totalSharesValue: number | null; // deal size in dollars
+  status: string | null;
+}
+
+/**
+ * Pull the IPO calendar for a date window from Finnhub's `/calendar/ipo`.
+ * Available on the free tier. Returns [] when Finnhub can't serve it (no key,
+ * request failed) so the route can degrade gracefully. `from`/`to` are
+ * YYYY-MM-DD; results are sorted soonest-first.
+ */
+export async function fetchIpoCalendar(
+  from: string,
+  to: string
+): Promise<IpoListing[]> {
+  const token = process.env.FINNHUB_API_KEY;
+  if (!token) return [];
+  const url = `${BASE}/calendar/ipo?from=${from}&to=${to}&token=${token}`;
+  try {
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(12_000),
+      // Cache at the Next layer — the calendar moves at most daily.
+      next: { revalidate: 3600 },
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    const rows: unknown[] = Array.isArray(json?.ipoCalendar) ? json.ipoCalendar : [];
+    return rows
+      .map((r): IpoListing => {
+        const o = r as Record<string, unknown>;
+        return {
+          date: str(o.date) ?? "",
+          symbol: str(o.symbol) ?? "",
+          name: str(o.name) ?? str(o.symbol) ?? "",
+          exchange: str(o.exchange),
+          price: str(o.price),
+          numberOfShares: num(o.numberOfShares),
+          totalSharesValue: num(o.totalSharesValue),
+          status: str(o.status),
+        };
+      })
+      .filter((r) => r.date && (r.symbol || r.name))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Pull a fundamentals snapshot for one US ticker from Finnhub. Returns null when
  * Finnhub can't serve it (no key, request failed, or unknown symbol) so the
  * caller can fall back to Yahoo. Fields Finnhub's free tier doesn't provide

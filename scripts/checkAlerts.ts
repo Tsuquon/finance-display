@@ -17,7 +17,48 @@
  */
 import { evaluateAlerts } from "@/lib/alerts";
 
+/**
+ * Only check alerts from one hour before the US open to one hour after the
+ * close — i.e. 08:30–17:00 America/New_York, weekdays. The cron fires every
+ * 30 min in UTC; this gate uses the Eastern wall clock so it tracks DST
+ * automatically. Set ALERTS_IGNORE_WINDOW=true to bypass (e.g. manual runs).
+ */
+function withinMarketWindow(now = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const weekday = get("weekday"); // Mon, Tue, ...
+  if (weekday === "Sat" || weekday === "Sun") return false;
+
+  // "24" can appear for midnight in some runtimes; normalize to 0.
+  const hour = Number(get("hour")) % 24;
+  const minute = Number(get("minute"));
+  const minutes = hour * 60 + minute;
+
+  const open = 8 * 60 + 30; // 08:30 ET — one hour before the 09:30 open
+  const close = 17 * 60; // 17:00 ET — one hour after the 16:00 close
+  return minutes >= open && minutes <= close;
+}
+
 async function main() {
+  if (process.env.ALERTS_IGNORE_WINDOW !== "true" && !withinMarketWindow()) {
+    const et = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(new Date());
+    console.log(
+      `[checkAlerts] skipped — ${et} ET is outside the 08:30–17:00 ET weekday window.`
+    );
+    return;
+  }
+
   const started = Date.now();
   const result = await evaluateAlerts();
   const secs = ((Date.now() - started) / 1000).toFixed(1);

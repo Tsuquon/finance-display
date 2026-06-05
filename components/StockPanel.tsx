@@ -14,7 +14,6 @@ import type { Company, Signal, StockDataPoint, TimeRange } from "@/types";
 import { cats } from "@/data/categories";
 import { currencySymbol } from "@/lib/currency";
 import SignalItem from "./SignalItem";
-import TradeWidget from "./TradeWidget";
 import AIAnalysis from "./AIAnalysis";
 import NewsSection from "./NewsSection";
 import InvestScore from "./InvestScore";
@@ -231,9 +230,6 @@ export default function StockPanel({ company, onClose }: Props) {
 
         {/* News */}
         <NewsSection ticker={company.ticker} name={company.name} />
-
-        {/* Trade */}
-        <TradeWidget company={company} currentPrice={currentPrice} />
       </div>
     </div>
   );

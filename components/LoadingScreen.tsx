@@ -11,6 +11,12 @@ const MILESTONES = [
 
 const AI_STEP = 2; // index of the AI analysis milestone
 
+// The real token count isn't known until /api/companies responds, so while we
+// wait we ease a placeholder toward this soft ceiling (the route's 16k output
+// cap) rather than letting it grow unbounded into fictional six-figure totals.
+// The counter snaps to the real value the moment it arrives.
+const TOKEN_SOFT_CAP = 16000;
+
 function Spinner() {
   return (
     <svg className="animate-spin" width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -39,9 +45,10 @@ function TokenCounter({ running, finalCount }: { running: boolean; finalCount: n
         });
       }, 16);
     } else if (running) {
-      // Simulate tokens flowing in
+      // No real count yet — ease toward the soft cap so it feels live but can't
+      // balloon past a plausible total before the real value lands.
       timer.current = setInterval(() => {
-        setDisplay((c) => c + Math.floor(Math.random() * 110 + 50));
+        setDisplay((c) => Math.min(c + Math.max(1, Math.ceil((TOKEN_SOFT_CAP - c) * 0.04)), TOKEN_SOFT_CAP));
       }, 40);
     }
 
