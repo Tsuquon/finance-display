@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import YFDefault from "yahoo-finance2";
+import { getAIClient } from "@/lib/aiClient";
 import type { Signal } from "@/types";
 import { sql } from "@/lib/db";
 
@@ -19,7 +19,7 @@ const yf = new (YFDefault as any)({
   }>;
 };
 
-const client = new Anthropic();
+const client = getAIClient("signals");
 
 const SYSTEM = `You are a market analyst. Given recent news headlines for a stock, extract 3 concise investment signals directly supported by the articles.
 Return ONLY a JSON array (no markdown, no extra text):
@@ -60,6 +60,7 @@ export async function GET(
   }
 
   if (articles.length === 0) return NextResponse.json([]);
+  if (!client) return NextResponse.json([]);
 
   try {
     const msg = await client.messages.create({

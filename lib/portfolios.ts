@@ -4,6 +4,32 @@ export const PORTFOLIOS_KEY = "finance-saved-portfolios";
 export const CUSTOM_COMPANIES_KEY = "finance-custom-companies";
 export const CUSTOM_COMPANIES_KEY_AU = "finance-custom-companies-au";
 
+// Tickers the user has starred to follow. A single cross-market list keyed by
+// ticker — the live US screener rotates, so starring is how a user pins a stock
+// they care about regardless of whether it's currently in the feed.
+export const STARRED_KEY = "finance-starred-tickers";
+
+/** Read the user's starred (followed) tickers from localStorage. */
+export function loadStarred(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STARRED_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Persist the user's starred (followed) tickers. Best-effort. */
+export function saveStarred(tickers: string[]) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(STARRED_KEY, JSON.stringify(tickers));
+  } catch {
+    /* ignore quota/serialization failures */
+  }
+}
+
 // The exact company list the Dashboard is currently displaying. The US feed is a
 // LIVE, capped "most actives" screener that rotates throughout the day, so two
 // independent fetches (Dashboard vs. chat) can legitimately return different
@@ -49,6 +75,27 @@ export function loadCustomCompanies(key: string = CUSTOM_COMPANIES_KEY): Company
     try { localStorage.removeItem(key); } catch { /* ignore */ }
     return [];
   }
+}
+
+/**
+ * Find a fully-loaded Company for a ticker without hitting the network: scans the
+ * Dashboard's published universe first, then the user's custom lists (US + AU).
+ * Returns null when the ticker was never loaded on the Market page, in which case
+ * callers can synthesize one via POST /api/companies/add. Match is case-insensitive.
+ */
+export function findLoadedCompany(ticker: string): Company | null {
+  if (typeof window === "undefined") return null;
+  const t = ticker.trim().toUpperCase();
+  const pools = [
+    loadActiveUniverse(),
+    loadCustomCompanies(CUSTOM_COMPANIES_KEY),
+    loadCustomCompanies(CUSTOM_COMPANIES_KEY_AU),
+  ];
+  for (const pool of pools) {
+    const hit = pool.find((c) => c.ticker?.toUpperCase() === t);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 export type Mode = "aggressive" | "balanced" | "conservative" | "momentum" | "value" | "growth" | "income" | "custom";

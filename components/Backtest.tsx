@@ -673,8 +673,7 @@ export default function Backtest() {
         </Link>
         <div className="flex-1" />
         <nav className="flex items-center gap-4">
-          <Link href="/"       className="text-xs text-gray-500 hover:text-white transition-colors">Portfolios</Link>
-          <Link href="/market" className="text-xs text-gray-500 hover:text-white transition-colors">Market</Link>
+          <Link href="/" className="text-xs text-gray-500 hover:text-white transition-colors">Market</Link>
           <span className="text-xs text-white font-semibold">Backtest</span>
         </nav>
       </header>
@@ -714,7 +713,7 @@ export default function Backtest() {
                   {portfolios.length === 0 ? (
                     <p className="text-xs text-gray-600 px-1">
                       No saved portfolios.{" "}
-                      <Link href="/" className="text-indigo-400 hover:underline">Create one →</Link>
+                      <Link href="/portfolio" className="text-indigo-400 hover:underline">Create one →</Link>
                     </p>
                   ) : (
                     <select

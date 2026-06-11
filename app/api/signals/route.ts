@@ -1,9 +1,9 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
+import { getAIClient } from "@/lib/aiClient";
 import type { Signal, Company } from "@/types";
 import { sql } from "@/lib/db";
 
-const client = new Anthropic();
+const client = getAIClient("signals");
 
 const SYSTEM_PROMPT = `You are a market intelligence analyst. Given a company and one of its market signals, expand it into 2-3 sentences of deeper context: what's driving it, why it matters to the thesis, and what to watch next. Be specific and analytical. No generic filler.`;
 
@@ -12,8 +12,8 @@ const TTL_MS = 60 * 60 * 1000; // 1 hour
 const HEADERS = { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" };
 
 export async function POST(req: NextRequest) {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return Response.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
+  if (!client) {
+    return Response.json({ error: "ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY_SIGNALS) not configured" }, { status: 500 });
   }
 
   const { company, signal }: { company: Company; signal: Signal } = await req.json();

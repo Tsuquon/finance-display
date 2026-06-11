@@ -19,18 +19,26 @@ const cache = new Map<string, CacheEntry>();
 const TTL = 60 * 1000; // 1 minute
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ ticker: string }> }
 ) {
   const { ticker } = await params;
 
-  const hit = cache.get(ticker);
+  // Lookback window in calendar days (default 90). Clamped so analyze() always
+  // has its ≥30 data-point minimum and we don't hammer Yahoo for huge ranges.
+  const daysParam = Number(req.nextUrl.searchParams.get("days"));
+  const days = Number.isFinite(daysParam)
+    ? Math.min(Math.max(Math.round(daysParam), 45), 730)
+    : 90;
+
+  const key = `${ticker}:${days}`;
+  const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL) {
     return NextResponse.json(hit.data);
   }
 
   const period1 = new Date();
-  period1.setDate(period1.getDate() - 90);
+  period1.setDate(period1.getDate() - days);
 
   const raw = await yf.chart(ticker, { period1, interval: "1d" });
 
@@ -40,6 +48,6 @@ export async function GET(
 
   const result = analyze(closes, volumes);
 
-  cache.set(ticker, { data: result, at: Date.now() });
+  cache.set(key, { data: result, at: Date.now() });
   return NextResponse.json(result);
 }

@@ -33,10 +33,17 @@ function ScoreBar({ score }: { score: number }) {
   );
 }
 
+const WINDOWS: { label: string; days: number }[] = [
+  { label: "3M", days: 90 },
+  { label: "6M", days: 180 },
+  { label: "1Y", days: 365 },
+];
+
 export default function TrendAnalysis({ ticker }: { ticker: string }) {
   const [result, setResult] = useState<TechnicalResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [days, setDays] = useState(90);
   const cur = currencySymbol(ticker);
 
   useEffect(() => {
@@ -48,7 +55,7 @@ export default function TrendAnalysis({ ticker }: { ticker: string }) {
         setResult(null);
         setError(false);
       }
-      fetch(`/api/analysis/${ticker}`)
+      fetch(`/api/analysis/${ticker}?days=${days}`)
         .then((r) => r.json())
         .then((data) => { if (!cancelled) { setResult(data); setLoading(false); setError(false); } })
         .catch(() => { if (!cancelled && showSpinner) { setError(true); setLoading(false); } });
@@ -59,13 +66,30 @@ export default function TrendAnalysis({ ticker }: { ticker: string }) {
     const id = setInterval(() => load(false), 60 * 1000);
 
     return () => { cancelled = true; clearInterval(id); };
-  }, [ticker]);
+  }, [ticker, days]);
 
   return (
     <div className="rounded-xl border border-gray-700/50 bg-gray-800/40 p-4">
-      <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">
-        Trend Analysis
-      </h4>
+      <div className="mb-3 flex items-center justify-between">
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          Trend Analysis
+        </h4>
+        <div className="flex items-center gap-0.5 rounded-lg border border-gray-700/50 bg-gray-900/40 p-0.5">
+          {WINDOWS.map((w) => (
+            <button
+              key={w.days}
+              onClick={() => setDays(w.days)}
+              className={`rounded-md px-2 py-0.5 text-[10px] font-semibold tabular-nums transition-colors ${
+                days === w.days
+                  ? "bg-gray-700 text-gray-100"
+                  : "text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {loading && (
         <div className="flex items-center gap-2 text-xs text-gray-600">

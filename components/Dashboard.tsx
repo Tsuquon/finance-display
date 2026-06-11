@@ -8,7 +8,7 @@ import type { BatchScoreMap } from "@/app/api/scores/batch/route";
 import type { QuantScoreMap } from "@/app/api/quant/route";
 import type { CompositeScoreMap } from "@/app/api/scores/composite/route";
 import type { StatisticsMap } from "@/app/api/statistics/route";
-import { loadCustomCompanies, publishActiveUniverse, CUSTOM_COMPANIES_KEY, CUSTOM_COMPANIES_KEY_AU } from "@/lib/portfolios";
+import { loadCustomCompanies, publishActiveUniverse, loadStarred, saveStarred, CUSTOM_COMPANIES_KEY, CUSTOM_COMPANIES_KEY_AU } from "@/lib/portfolios";
 import CompanyCard from "./CompanyCard";
 import NewsTicker from "./NewsTicker";
 import LoadingScreen from "./LoadingScreen";
@@ -180,6 +180,10 @@ export default function Dashboard() {
   const [statsLoading, setStatsLoading] = useState(false);
   const [panelVisible, setPanelVisible] = useState(false);
   const [customTickers, setCustomTickers] = useState<Set<string>>(new Set());
+  // Followed tickers (★). Persisted cross-market in localStorage; starredOnly
+  // narrows the grid to just the user's watchlist.
+  const [starred, setStarred] = useState<Set<string>>(new Set());
+  const [starredOnly, setStarredOnly] = useState(false);
   const [compact, setCompact] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [addTicker, setAddTicker] = useState("");
@@ -196,6 +200,21 @@ export default function Dashboard() {
     if (saved === "au" || saved === "us") setMarket(saved);
     setMarketRestored(true);
   }, []);
+
+  // Restore the user's followed tickers once, on mount.
+  useEffect(() => {
+    setStarred(new Set(loadStarred()));
+  }, []);
+
+  function toggleStar(ticker: string) {
+    setStarred((prev) => {
+      const next = new Set(prev);
+      if (next.has(ticker)) next.delete(ticker);
+      else next.add(ticker);
+      saveStarred([...next]);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!marketRestored) return;
@@ -410,9 +429,10 @@ export default function Dashboard() {
         const d = stats[c.ticker]?.dayChangePct;
         matchPerf = d != null && (perf === "gainers" ? d >= 0 : d < 0);
       }
-      return matchSearch && matchIndustry && matchPerf;
+      const matchStarred = !starredOnly || starred.has(c.ticker);
+      return matchSearch && matchIndustry && matchPerf && matchStarred;
     });
-  }, [companies, search, industry, perf, stats]);
+  }, [companies, search, industry, perf, stats, starredOnly, starred]);
 
   const sorted = useMemo(() => {
     const sortFn = (a: Company, b: Company) => {
@@ -436,6 +456,33 @@ export default function Dashboard() {
     };
     return [...filtered].sort(sortFn);
   }, [filtered, sortBy, scores, quantScores, compositeScores, stats]);
+
+  // Arrow-key navigation: while a stock panel is open, Left/Right step to the
+  // previous/next stock in the visible (sorted) order, swapping the panel in
+  // place. No wrap at the ends; ignored while typing in an input.
+  useEffect(() => {
+    if (!selected) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const el = e.target as HTMLElement | null;
+      if (
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT" ||
+          el.isContentEditable)
+      )
+        return;
+      const idx = sorted.findIndex((c) => c.ticker === selected!.ticker);
+      if (idx === -1) return;
+      const target = e.key === "ArrowRight" ? idx + 1 : idx - 1;
+      if (target < 0 || target >= sorted.length) return;
+      e.preventDefault();
+      setSelected(sorted[target]);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selected, sorted]);
 
   const btnBase = "flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-mono tracking-wide transition-all duration-150 cursor-pointer";
   const btnIdle = "border-gray-800 bg-gray-900/50 text-gray-500 hover:border-gray-700 hover:text-gray-300";
@@ -593,8 +640,17 @@ export default function Dashboard() {
 
           {/* Nav */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <Link href="/" className={`${btnBase} ${btnIdle}`}>
-              <span className="text-gray-600">◈</span> Portfolios
+            <Link href="/graph" className={`${btnBase} ${btnIdle}`}>
+              <span className="text-gray-600">▦</span> Graph
+            </Link>
+            <Link href="/backtest" className={`${btnBase} ${btnIdle}`}>
+              <span className="text-gray-600">↻</span> Backtest
+            </Link>
+            <Link href="/alerts" className={`${btnBase} ${btnIdle}`}>
+              <span className="text-gray-600">◔</span> Alerts
+            </Link>
+            <Link href="/metrics" className={`${btnBase} ${btnIdle}`}>
+              <span className="text-gray-600">≡</span> Methodology
             </Link>
             <button
               onClick={() => window.dispatchEvent(new Event("toggle-ai-chat"))}
@@ -660,6 +716,23 @@ export default function Dashboard() {
               );
             })}
           </div>
+
+          {/* Watchlist filter — scope the grid to followed (★) stocks */}
+          <button
+            onClick={() => setStarredOnly((s) => !s)}
+            title={starredOnly ? "Show all stocks" : "Show only followed stocks"}
+            className={`flex items-center gap-1 rounded-md border px-2.5 py-1 text-[10px] font-mono font-semibold tracking-wide transition-all duration-150 ${
+              starredOnly
+                ? "border-amber-500/40 bg-amber-950/50 text-amber-300"
+                : "border-gray-800/80 bg-gray-900/80 text-gray-600 hover:text-gray-400"
+            }`}
+          >
+            <span>{starredOnly ? "★" : "☆"}</span>
+            Starred
+            {starred.size > 0 && (
+              <span className="ml-0.5 text-gray-600 tabular-nums">{starred.size}</span>
+            )}
+          </button>
 
           <div className="ml-auto flex items-center gap-4">
             {!loading && companies.length > 0 && (
@@ -747,6 +820,8 @@ export default function Dashboard() {
                   }
                   sortScoreMax={sortBy === "quant" || sortBy === "composite" ? 100 : 10}
                   sortDisplay={METRIC_SORTS.has(sortBy) ? metricDisplay(sortBy, stats[company.ticker]) : undefined}
+                  starred={starred.has(company.ticker)}
+                  onToggleStar={() => toggleStar(company.ticker)}
                   onClick={() => {
                     if (selected?.ticker === company.ticker) { closePanel(); }
                     else { setPanelVisible(false); setSelected(company); }

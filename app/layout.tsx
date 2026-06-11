@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import MarketStatusBanner from "@/components/MarketStatusBanner";
 import PersistentAIChat from "@/components/PersistentAIChat";
-import AlertsPoller from "@/components/AlertsPoller";
+import PersistentNotes from "@/components/PersistentNotes";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -34,7 +34,7 @@ export default function RootLayout({
         <MarketStatusBanner />
         {children}
         <PersistentAIChat />
-        <AlertsPoller />
+        <PersistentNotes />
       </body>
     </html>
   );

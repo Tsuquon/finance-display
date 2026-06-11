@@ -36,7 +36,14 @@ jobs:
           DEMO_MODE: "true" # force live data (CI NODE_ENV is not production)
           # Finnhub serves US-ticker quotes/fundamentals; Yahoo covers ASX + fallback.
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          # Shared fallback; the per-function keys below override it where set.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # This worker spends tokens on two AI paths: alert worthiness filtering
+          # (lib/alerts) and stale-score refresh (lib/scoring). Give each its own
+          # key so usage is billed/limited separately; both fall back to the
+          # shared key above when the secret is unset.
+          ANTHROPIC_API_KEY_ALERTS: ${{ secrets.ANTHROPIC_API_KEY_ALERTS }}
+          ANTHROPIC_API_KEY_SCORING: ${{ secrets.ANTHROPIC_API_KEY_SCORING }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           # Optional email fallback — leave unset to use Telegram only.

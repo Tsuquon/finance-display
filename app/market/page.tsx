@@ -1,7 +1,7 @@
-import Dashboard from "@/components/Dashboard";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Market — Portfolio Lens" };
-
+// The market view is now the homepage; keep this path as a redirect so any old
+// /market links still resolve.
 export default function MarketPage() {
-  return <Dashboard />;
+  redirect("/");
 }

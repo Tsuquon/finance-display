@@ -1,10 +1,11 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
+import { getAIClient } from "@/lib/aiClient";
 import type { Company } from "@/types";
 import { sql } from "@/lib/db";
 import { getStockStatistics, formatStatsForPrompt } from "@/lib/stockStats";
+import { formatAnalystForPrompt, type AnalystRatings } from "@/app/api/analyst/[ticker]/route";
 
-const client = new Anthropic();
+const client = getAIClient("analyze");
 
 const SYSTEM_PROMPT = `You are a concise equity research analyst. You write one section of a short analysis at a time, grounded in the provided thesis, signals, and live Yahoo Finance fundamentals. Cite specific metrics (valuation, margins, growth, balance sheet, analyst targets) where they support a point. Output only the prose for the requested section — no heading, no preamble, no disclaimers, no restating the company name.`;
 
@@ -44,8 +45,8 @@ async function ensureTable() {
 }
 
 export async function POST(req: NextRequest) {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return Response.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
+  if (!client) {
+    return Response.json({ error: "ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY_ANALYZE) not configured" }, { status: 500 });
   }
 
   const { company }: { company: Company } = await req.json();
@@ -76,12 +77,21 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        // Only pull fundamentals when we actually need to generate something.
+        // Only pull fundamentals + analyst ratings when we actually need to generate something.
         let fundamentals = "";
+        let analyst = "";
         if (!allCached) {
-          const statsMap = await getStockStatistics([company.ticker]);
+          const origin = new URL(req.url).origin;
+          const [statsMap, analystRes] = await Promise.all([
+            getStockStatistics([company.ticker]),
+            fetch(`${origin}/api/analyst/${encodeURIComponent(company.ticker)}`)
+              .then((r) => (r.ok ? (r.json() as Promise<AnalystRatings>) : null))
+              .catch(() => null),
+          ]);
           const stats = statsMap[company.ticker.toUpperCase()];
           fundamentals = stats ? `\nFundamentals (Yahoo Finance):\n${formatStatsForPrompt(stats)}` : "";
+          const analystSummary = analystRes ? formatAnalystForPrompt(analystRes) : null;
+          analyst = analystSummary ? `\nAnalyst ratings (Yahoo Finance):\n${analystSummary}` : "";
         }
 
         // Stable context shared by every segment call — cached so the 3 calls in
@@ -92,7 +102,8 @@ export async function POST(req: NextRequest) {
           `Category: ${company.category}\n` +
           `Thesis: ${company.reason}\n` +
           `Signals:\n${company.signals.map((s) => `- [${s.type}] ${s.text}`).join("\n")}` +
-          fundamentals;
+          fundamentals +
+          analyst;
 
         const produced: string[] = [];
         let totalInput = 0, totalOutput = 0, totalCacheRead = 0;

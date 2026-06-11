@@ -1,12 +1,14 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
+import { getAIClient } from "@/lib/aiClient";
 import type { ChatMessage, Company } from "@/types";
 import { sql } from "@/lib/db";
 import { getStockStatistics, formatStatsForPrompt, type StockStatistics } from "@/lib/stockStats";
+import { formatAnalystForPrompt, type AnalystRatings } from "@/app/api/analyst/[ticker]/route";
 import { createAlert, listAlerts, deleteAlert, type AlertKind, type AlertOperator } from "@/lib/alerts";
 import { sendEmail, alertRecipient, emailConfigured } from "@/lib/email";
 
-const client = new Anthropic();
+const client = getAIClient("chat");
 
 const SYSTEM_PROMPT = `You are a senior equity research analyst advising on this portfolio. Write with the rigor, precision, and measured tone of institutional sell-side research.
 
@@ -22,6 +24,7 @@ On-demand tools (these work for ANY ticker — not only the pre-loaded list):
 - get_company_statistics(ticker) — full fundamentals snapshot for one stock (every available metric, plus profile). Use when fundamentals aren't pre-loaded for that ticker, or the user asks about a metric not shown above.
 - get_technical_analysis(ticker) — composite bull/bear score, trend, RSI, MACD, moving averages, support/resistance
 - get_quant_scores(ticker?) — percentile rankings vs the portfolio universe for value, quality, momentum, growth, low-volatility factors. Pass a ticker to fold a specific stock into the ranking if it isn't already there.
+- get_analyst_ratings(ticker) — Wall Street analyst consensus: recommendation (buy/hold/sell), average/high/low 12-month price targets with implied move, the Buy/Hold/Sell distribution, and recent rating actions (upgrades/downgrades/initiations by firm). Use for "what do analysts think", price-target, or upgrade/downgrade questions.
 - get_news(ticker) — most recent Yahoo Finance headlines (title, publisher, time, link) for one stock
 - get_ipo_calendar(filter?) — upcoming and recently-priced US IPO listings (date, symbol, company, exchange, price/range, deal size, status). Use for questions about IPOs, new listings, debuts, or what's going public. Pass filter 'upcoming', 'recent', or 'all' (default 'all').
 
@@ -129,6 +132,18 @@ const TOOLS: Anthropic.Messages.Tool[] = [
     },
   },
   {
+    name: "get_analyst_ratings",
+    description:
+      "Fetch Wall Street analyst ratings for any stock from Yahoo Finance: consensus recommendation (strong buy → strong sell), average/high/low 12-month price targets and the implied move from the current price, the Buy/Hold/Sell distribution across covering analysts, and recent rating actions (firm, upgrade/downgrade/initiation, grade change, date). Use when the user asks what analysts think, about price targets, upside/downside to targets, or recent upgrades/downgrades. Per-firm dollar targets aren't available on this data tier — report consensus targets and the actions list, not individual firms' target prices.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        ticker: { type: "string", description: "Uppercase stock ticker symbol, e.g. NVDA" },
+      },
+      required: ["ticker"],
+    },
+  },
+  {
     name: "get_news",
     description:
       "Fetch the most recent news headlines for any stock from Yahoo Finance. Returns article titles, publishers, publish times, and links. Use when the user asks what's happening with a stock, recent news/catalysts, or why it moved. Prefer this over the pre-loaded signals when the user wants current headlines.",
@@ -220,8 +235,8 @@ const TOOLS: Anthropic.Messages.Tool[] = [
 ];
 
 export async function POST(req: NextRequest) {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return Response.json({ error: "ANTHROPIC_API_KEY not configured" }, { status: 500 });
+  if (!client) {
+    return Response.json({ error: "ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY_CHAT) not configured" }, { status: 500 });
   }
 
   const { messages, companies }: { messages: ChatMessage[]; companies: Company[] } =
@@ -306,6 +321,16 @@ export async function POST(req: NextRequest) {
         });
         if (!res.ok) return "Quant scores unavailable.";
         return JSON.stringify(await res.json(), null, 2);
+      }
+      if (name === "get_analyst_ratings") {
+        const ticker = String(input.ticker ?? "").toUpperCase();
+        if (!ticker) return "No ticker provided.";
+        const res = await fetch(`${origin}/api/analyst/${encodeURIComponent(ticker)}`);
+        if (!res.ok) return `Analyst ratings unavailable for ${ticker}.`;
+        const data = (await res.json()) as AnalystRatings & { error?: string };
+        if (data.error) return `Analyst ratings unavailable for ${ticker}.`;
+        const summary = formatAnalystForPrompt(data);
+        return summary ?? `No analyst coverage available for ${ticker}.`;
       }
       if (name === "get_news") {
         const ticker = String(input.ticker ?? "").toUpperCase();

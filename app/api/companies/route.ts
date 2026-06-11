@@ -1,20 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import YFDefault from "yahoo-finance2";
 import type { Company, Signal } from "@/types";
 import { normalizeIndustry } from "@/lib/normalizeIndustry";
 import { makeSignals } from "@/lib/makeSignals";
 import { sql } from "@/lib/db";
 import { AU_UNIVERSE } from "@/lib/universeAU";
+import { getAIClient } from "@/lib/aiClient";
 
 const yf = new (YFDefault as any)({
   suppressNotices: ["ripHistorical", "yahooSurvey"],
 }) as {
-  screener(opts: { scrIds: string; count: number }): Promise<{ quotes: unknown[] }>;
+  screener(
+    opts: { scrIds: string; count: number },
+    queryOptionsOverrides: undefined,
+    moduleOptions: { validateResult: false }
+  ): Promise<{ quotes: unknown[] }>;
   quote(symbols: string[]): Promise<unknown[]>;
 };
 
-const anthropic = new Anthropic();
+const anthropic = getAIClient("companies");
 
 const TTL = 4 * 60 * 60 * 1000; // 4 hours
 
@@ -55,6 +59,10 @@ export async function GET(req: NextRequest) {
     if (age < TTL) return NextResponse.json(rows[0].companies);
   }
 
+  if (!anthropic) {
+    return NextResponse.json({ error: "ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY_COMPANIES) not configured" }, { status: 500 });
+  }
+
   let equities: ScreenerQuote[];
   if (market === "au") {
     // Yahoo's predefined screeners are US-centric, so for the ASX we fetch live
@@ -65,7 +73,14 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0))
       .slice(0, 120);
   } else {
-    const screener = await yf.screener({ scrIds: "most_actives", count: 150 });
+    // yahoo-finance2 v3 enforces a strict schema on the screener response, and
+    // Yahoo periodically returns shapes it doesn't recognize (oneOf validation
+    // failure). Skip validation so we get the raw quotes instead of a 500.
+    const screener = await yf.screener(
+      { scrIds: "most_actives", count: 150 },
+      undefined,
+      { validateResult: false }
+    );
     equities = (screener.quotes as ScreenerQuote[])
       .filter((q) => q.quoteType === "EQUITY")
       .slice(0, 120);
@@ -87,7 +102,7 @@ Rules:
 - signal must be a qualitative competitive/macro observation only — do NOT mention P/E ratios, price changes, analyst ratings, or any specific numbers (those are shown separately from live data)`;
 
   const msg = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
+    model: "claude-haiku-4-5-20251001",
     max_tokens: 16000,
     system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: JSON.stringify(payload) }],

@@ -1,4 +1,4 @@
-export type TimeRange = "1H" | "1D" | "1W" | "1M" | "3M" | "1Y";
+export type TimeRange = "1H" | "1D" | "1W" | "1M" | "3M" | "1Y" | "5Y" | "MAX";
 
 export type CategoryKey = "future" | "stable" | "fading";
 
@@ -33,6 +33,17 @@ export interface CategoryConfig {
 export interface StockDataPoint {
   date: string;
   price: number;
+  volume: number;
+}
+
+// Full OHLCV bar for the custom Graph View chart. `time` is a UNIX-seconds
+// timestamp (lightweight-charts' UTCTimestamp format).
+export interface OhlcBar {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
   volume: number;
 }
 

@@ -14,8 +14,27 @@ interface Props {
   sortLabel?: string;
   sortScoreMax?: number;
   sortDisplay?: string;
+  starred?: boolean;
+  onToggleStar?: () => void;
   onClick: () => void;
   onRemove?: () => void;
+}
+
+// Star toggle for following a stock. Filled gold when starred; dim/hollow
+// otherwise (revealed on card hover). stopPropagation so it doesn't open the panel.
+function StarButton({ starred, onToggle, className = "" }: { starred: boolean; onToggle: () => void; className?: string }) {
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      className={`shrink-0 leading-none transition-colors ${
+        starred ? "text-amber-400 hover:text-amber-300" : "text-gray-700 hover:text-gray-400 opacity-0 group-hover:opacity-100"
+      } ${className}`}
+      aria-label={starred ? "Unfollow" : "Follow"}
+      title={starred ? "Unfollow" : "Follow"}
+    >
+      {starred ? "★" : "☆"}
+    </button>
+  );
 }
 
 // Compact human-readable number, e.g. 1.2B, 340M, 12.4K.
@@ -91,7 +110,7 @@ function RangeBar({ stat, accent }: { stat: StockStatistics; accent: string }) {
 
 export default function CompanyCard({
   company, selected, compact, stat,
-  sortScore, sortLabel, sortScoreMax, sortDisplay, onClick, onRemove,
+  sortScore, sortLabel, sortScoreMax, sortDisplay, starred, onToggleStar, onClick, onRemove,
 }: Props) {
   const cat = cats[company.category];
   const cur = currencySymbol(company.ticker);
@@ -123,7 +142,11 @@ export default function CompanyCard({
           </button>
         )}
 
-        <span className="shrink-0 w-[52px] pl-3 text-[11px] font-mono font-bold" style={{ color: cat.color }}>
+        {onToggleStar && <StarButton starred={!!starred} onToggle={onToggleStar} className="pl-3 text-sm" />}
+        <span
+          className={`shrink-0 w-[52px] text-[11px] font-mono font-bold ${onToggleStar ? "" : "pl-3"}`}
+          style={{ color: cat.color }}
+        >
           {company.ticker}
         </span>
         <span className="truncate text-xs text-gray-300 leading-none">{company.name}</span>
@@ -188,6 +211,7 @@ export default function CompanyCard({
                 style={{ background: cat.color }}
                 title={cat.label}
               />
+              {onToggleStar && <StarButton starred={!!starred} onToggle={onToggleStar} className="text-sm" />}
             </div>
             <h3 className="mt-1 truncate text-[13px] font-semibold leading-snug text-white">
               {company.name}

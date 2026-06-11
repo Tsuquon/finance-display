@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import type { Company } from "@/types";
 import { scoreStore, SCORE_TTL } from "@/lib/scoreStore";
 import { sql } from "@/lib/db";
+import { getAIClient } from "@/lib/aiClient";
 
-const anthropic = new Anthropic();
+const anthropic = getAIClient("scoring");
 
 export type ScoreResult = {
   shortTerm: { score: number; rationale: string };
@@ -46,6 +46,10 @@ export async function POST(req: NextRequest) {
   }
 
   // 3. Claude fallback
+  if (!anthropic) {
+    return NextResponse.json({ error: "ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY_SCORING) not configured" }, { status: 500 });
+  }
+
   const prompt = `Ticker: ${company.ticker}
 Name: ${company.name}
 Industry: ${company.industry}

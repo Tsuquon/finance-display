@@ -228,15 +228,15 @@ function AISection() {
 function TechnicalSection() {
   const indicators = [
     {
-      name: "Price vs SMA20",
+      name: "Price vs EMA21",
       weight: 15,
-      logic: "Price above 20-day moving avg → +1 (bullish), below → −1",
+      logic: "Price above 21-day EMA (fast trend) → +1 (bullish), below → −1",
       color: "bg-cyan-500",
     },
     {
-      name: "SMA20 vs SMA50",
+      name: "Trend regime (50/200)",
       weight: 20,
-      logic: "Golden cross (SMA20 > SMA50) → +1; Death cross → −1",
+      logic: "Golden cross (SMA50 > SMA200) → +1; Death cross → −1. On windows too short for SMA200, falls back to price vs SMA50, then EMA21",
       color: "bg-cyan-500",
     },
     {
@@ -621,7 +621,7 @@ export default function MetricsPage() {
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <span className="text-xs font-mono text-gray-700">Portfolio Lens — Scoring Methodology</span>
           <Link href="/" className="text-xs font-mono text-gray-600 hover:text-gray-300 transition-colors">
-            ← Back to portfolios
+            ← Back to market
           </Link>
         </div>
       </div>

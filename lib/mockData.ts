@@ -7,6 +7,8 @@ const RANGE_DAYS: Record<TimeRange, number> = {
   "1M": 30,
   "3M": 90,
   "1Y": 365,
+  "5Y": 1825,
+  "MAX": 3650,
 };
 
 const BASE_PRICES: Record<string, number> = {

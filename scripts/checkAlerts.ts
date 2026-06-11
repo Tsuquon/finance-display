@@ -4,7 +4,8 @@
  * Run on a schedule (GitHub Actions cron) with these env vars set:
  *   DATABASE_URL        — Neon connection string (same DB the app uses)
  *   DEMO_MODE=true      — forces live Yahoo data instead of dev mocks
- *   ANTHROPIC_API_KEY   — optional; only news/ai alerts spend tokens (Haiku)
+ *   ANTHROPIC_API_KEY   — optional; only news/ai alerts spend tokens (Haiku).
+ *                         ANTHROPIC_API_KEY_ALERTS overrides it for this worker.
  *   TELEGRAM_BOT_TOKEN  — push notifications
  *   TELEGRAM_CHAT_ID    — your chat id
  *   GMAIL_USER          — optional email fallback

@@ -1,7 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { Company } from "@/types";
 import { sql } from "@/lib/db";
 import { SCORE_TTL } from "@/lib/scoreStore";
+import { getAIClient } from "@/lib/aiClient";
 
 /**
  * Shared AI scoring used by both the /api/scores/batch route and the headless
@@ -9,12 +9,6 @@ import { SCORE_TTL } from "@/lib/scoreStore";
  * Claude call lives here where either can import it.
  */
 
-let anthropic: Anthropic | null = null;
-function getAnthropic(): Anthropic | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  if (!anthropic) anthropic = new Anthropic();
-  return anthropic;
-}
 
 const SYSTEM = `You are an equity analyst. Given a list of companies, return ONLY a compact JSON array (no markdown):
 [{"ticker":"...","st":N,"stRationale":"one sentence max 12 words","lt":N,"ltRationale":"one sentence max 12 words"},...]
@@ -43,7 +37,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 // (so the caller can degrade those tickers). Returns [] when the model output
 // can't be parsed, so one bad chunk never fails the whole request.
 async function scoreChunk(companies: Company[]): Promise<ScoredItem[]> {
-  const client = getAnthropic();
+  const client = getAIClient("scoring");
   if (!client) return [];
 
   const payload = companies.map((c) => ({

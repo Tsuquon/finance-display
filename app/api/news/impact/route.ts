@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import type { Company } from "@/types";
 import { sql } from "@/lib/db";
+import { getAIClient } from "@/lib/aiClient";
 
-const anthropic = new Anthropic();
+const anthropic = getAIClient("news");
 
 export type CompanyImpact = {
   ticker: string;
@@ -38,6 +38,10 @@ export async function POST(req: NextRequest) {
   // News impact for a given article never changes — cache indefinitely
   const rows = await sql`SELECT data FROM news_impact WHERE uuid = ${uuid}`;
   if (rows.length > 0) return NextResponse.json(rows[0].data);
+
+  if (!anthropic) {
+    return NextResponse.json({ error: "ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY_NEWS) not configured" }, { status: 500 });
+  }
 
   const prompt = `Headline: "${title}" — ${publisher}
 

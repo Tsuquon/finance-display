@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import YFDefault from "yahoo-finance2";
+import { getAIClient } from "@/lib/aiClient";
 import type { Company } from "@/types";
 import { normalizeIndustry } from "@/lib/normalizeIndustry";
 import { makeSignals } from "@/lib/makeSignals";
@@ -22,7 +22,7 @@ const yf = new (YFDefault as any)({
   }>;
 };
 
-const anthropic = new Anthropic();
+const anthropic = getAIClient("companies");
 
 const SYSTEM = `You are an equity analyst. Given a stock ticker and name, return ONLY a JSON object (no markdown):
 {"industry":"...","category":"future"|"stable"|"fading","reason":"one-sentence thesis (max 15 words)","signal":{"text":"qualitative insight max 10 words","type":"positive"|"negative"|"neutral","source":"publication or source max 4 words"}}
@@ -53,6 +53,10 @@ export async function POST(req: NextRequest) {
   if (cached.length > 0) {
     ai = cached[0].data as typeof ai;
   } else {
+    if (!anthropic) {
+      return NextResponse.json({ error: "ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY_COMPANIES) not configured" }, { status: 500 });
+    }
+
     const payload = {
       ticker: quote.symbol,
       name: quote.shortName ?? quote.longName ?? quote.symbol,

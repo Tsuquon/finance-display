@@ -1,17 +1,11 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import { sql } from "@/lib/db";
 import { getStockStatistics, type StockStatistics } from "@/lib/stockStats";
 import { sendEmail, alertRecipient, emailConfigured } from "@/lib/email";
 import { sendPush, pushConfigured } from "@/lib/push";
 import { getTechnicals, getNewsArticles } from "@/lib/marketData";
 import { refreshStaleScores } from "@/lib/scoring";
-
-let anthropic: Anthropic | null = null;
-function getAnthropic(): Anthropic | null {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  if (!anthropic) anthropic = new Anthropic();
-  return anthropic;
-}
+import { getAIClient } from "@/lib/aiClient";
 
 /**
  * Natural-language-driven price/score/technical/news alerts.
@@ -218,7 +212,7 @@ async function judgeNews(opts: {
   articles: NewsArticle[];
 }): Promise<{ worthy: boolean; headline: string | null; reason: string }> {
   const newest = opts.articles[0] ?? null;
-  const client = getAnthropic();
+  const client = getAIClient("alerts");
   if (!client) {
     return { worthy: true, headline: newest?.title ?? null, reason: "sent without AI filtering (ANTHROPIC_API_KEY unset)" };
   }
@@ -302,7 +296,7 @@ async function judgeSmart(opts: {
   criteria: string;
   context: string;
 }): Promise<{ worthy: boolean; reason: string }> {
-  const client = getAnthropic();
+  const client = getAIClient("alerts");
   if (!client) return { worthy: false, reason: "" };
 
   const prompt = `A user set a smart alert for ${opts.ticker} with this condition:\n"${opts.criteria}"\n\nCurrent data for ${opts.ticker}:\n${opts.context}\n\nBased ONLY on this data, decide whether the user's condition is satisfied right now and they should be emailed. Be strict: only answer true if the data clearly meets the condition; if data is missing or ambiguous, answer false.\n\nReply with ONLY a JSON object, no prose:\n{"worthy": true|false, "reason": "<one short sentence citing the relevant figure(s)>"}`;
